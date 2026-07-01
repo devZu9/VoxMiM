@@ -246,7 +246,15 @@ unsafe fn show_menu(hwnd: *mut std::ffi::c_void) {
 
     unsafe { AppendMenuW(menu, MF_SEPARATOR, 0, std::ptr::null()); }
 
-    let con_w: Vec<u16> = "Показать окно\0".encode_utf16().collect();
+    let con_visible = unsafe {
+        unsafe extern "system" {
+            fn IsWindowVisible(hWnd: isize) -> i32;
+        }
+        let hwnd = crate::CONSOLE_HWND.load(std::sync::atomic::Ordering::SeqCst);
+        hwnd != 0 && IsWindowVisible(hwnd) != 0
+    };
+    let con_label = if con_visible { "Скрыть окно" } else { "Показать окно" };
+    let con_w: Vec<u16> = format!("{con_label}\0").encode_utf16().collect();
     unsafe { AppendMenuW(menu, MF_STRING, CMD_CONSOLE as usize, con_w.as_ptr()); }
 
     unsafe { AppendMenuW(menu, MF_SEPARATOR, 0, std::ptr::null()); }

@@ -1,4 +1,4 @@
-# VoxMiM v0.2.0 — Итоговая сводка
+# VoxMiM v0.3.0 — Итоговая сводка
 
 ## Что сделано
 
@@ -23,6 +23,9 @@ Ctrl+Insert → запись → отпустить → whisper (GPU) → тек
 | Команды голосом | ✅ | 199 команд из VoxBee |
 | Буфер обмена | ✅ | Сохраняется и восстанавливается |
 | Smart Spacing | ✅ | AUTO-пробел перед вставкой |
+| Console toggle | ✅ | Показать/скрыть консоль из трея |
+| Иконка .exe | ✅ | vox-mim.ico вшита в бинарник |
+| Авто-загрузка | ✅ | whisper-cli скачивается при первом запуске |
 
 ### Архитектура
 
@@ -39,13 +42,18 @@ Ctrl+Insert → запись → отпустить → whisper (GPU) → тек
 assets/
 ├── blue-voice.png            # Иконка трея (IDLE)
 ├── microphone-stage-light.png# Иконка трея (RECORDING)
+├── vox-mim.ico               # Иконка .exe
 ├── ru_words_utf8.txt         # Словарь ~2.4M слов (выборка 200K)
 ├── russian.txt               # Исходный словарь cp1251
 └── russian_surnames.txt      # Фамилии cp1251
 
+resource/
+└── resource.rc               # Windows resource file (иконка)
+
 src/
-├── main.rs                   # Точка входа
+├── main.rs                   # Точка входа + скрытие консоли
 ├── config.rs                 # Config + миграция из VoxBee
+├── download.rs               # Авто-скачивание whisper-cli
 ├── app.rs                    # Event loop + wake word
 ├── audio/capture.rs          # cpal захват
 ├── audio/ring_buffer.rs      # Pre-roll буфер
@@ -88,7 +96,6 @@ cargo test               # 18 тестов
 - [ ] **Wake word** — код готов, требует `wake_mode: true` + модель
 - [ ] **README.md** (EN + RU)
 - [ ] **LICENSE** (GPL-3.0)
-- [ ] **Иконка программы** (.ico для файла)
 - [ ] **macOS/Linux** порт
 - [ ] **Английский язык** — словарь + space fixer
 - [ ] **CI/CD** (GitHub Actions)

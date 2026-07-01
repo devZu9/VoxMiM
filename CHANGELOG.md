@@ -5,6 +5,25 @@ All notable changes to VoxMiM will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] — 2026-07-01
+
+### Исправление консоли + автозагрузка бинарников
+
+#### Core
+- Новый модуль `download.rs` — авто-скачивание whisper-cli с GitHub при первом запуске
+- `build.rs` — удалено копирование CUDA DLL (теперь загружаются по требованию)
+- `config.rs` — добавлено поле `whisper_bins_path` (кеширование пути к бинарникам)
+- Поддержка 4 вариантов: CUDA 12.4 → CUDA 11.8 → CPU+BLAS → CPU
+
+#### UI
+- Консоль **автоматически скрывается** при запуске (только трей)
+- Пункт меню «Показать окно» / «Скрыть окно» — динамический текст
+- Иконка `vox-mim.ico` встроена в `.exe` через `embed-resource`
+
+#### DevOps
+- `embed-resource` = "3.0" в build-dependencies для встраивания .ico
+- `resource/resource.rc` — файл ресурсов Windows
+
 ## [0.2.0] — 2026-07-01
 
 ### MVP — Push-to-talk → запись → whisper → текст → вставка

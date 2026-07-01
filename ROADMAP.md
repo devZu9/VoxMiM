@@ -106,12 +106,15 @@
   - [x] Числительные: "два"→2
   - [x] Операторы: плюс→+, минус→−
 
-## Фаза 9: Полировка 🟡
+## Фаза 9: Полировка 🟢
 
 - [x] Ассеты: PNG иконки для трея
+- [x] Ассеты: `.ico` для .exe (встроен через embed-resource)
 - [x] `.gitignore`
 - [x] Юнит-тесты для `text/` модулей (18 тестов)
 - [x] `Cargo.toml` profile overrides (release → LTO, optimize)
+- [x] Авто-скачивание whisper-cli (download.rs)
+- [x] Console toggle (показать/скрыть из трея)
 - [ ] `README.md` (EN + RU)
 - [ ] `LICENSE` (GPL-3.0)
 - [ ] Интеграционное тестирование (end-to-end)
