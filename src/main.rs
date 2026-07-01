@@ -2,6 +2,7 @@ mod app;
 mod audio;
 mod commands;
 mod config;
+mod download;
 mod input;
 mod stt;
 mod text;

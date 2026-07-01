@@ -1,6 +1,7 @@
 use crate::audio::capture::AudioCapture;
 use crate::commands::executor::{CommandAction, CommandExecutor};
 use crate::config::Config;
+use crate::download;
 use crate::input::hotkeys::HotkeyListener;
 use crate::input::inserter::TextInserter;
 use crate::stt::engine::WhisperEngine;
@@ -69,7 +70,20 @@ impl App {
         }
 
         // Whisper — общий доступ через Arc<Mutex>
-        let whisper = Arc::new(Mutex::new(WhisperEngine::new()));
+        let bins_path = match download::ensure_whisper_bins(config.whisper_bins_path.as_deref()) {
+            Ok(p) => {
+                if config.whisper_bins_path.as_deref() != Some(&p) {
+                    config.whisper_bins_path = Some(p.clone());
+                    let _ = config.save();
+                }
+                p
+            }
+            Err(e) => {
+                log::error!("Whisper binaries: {e}");
+                String::new()
+            }
+        };
+        let whisper = Arc::new(Mutex::new(WhisperEngine::new(&bins_path)));
         {
             let mut w = whisper.lock().unwrap();
             w.set_language(&config.language);

@@ -47,7 +47,12 @@ fn resample_to_16khz(samples: &[f32], input_rate: u32) -> Vec<f32> {
     out
 }
 
-fn find_whisper_bin() -> String {
+fn find_whisper_bin(bins_path: &str) -> String {
+    let path = std::path::Path::new(bins_path).join("whisper-cli.exe");
+    if path.exists() {
+        return path.to_string_lossy().to_string();
+    }
+    // fallback — ищем в известных местах
     let candidates = [
         r"C:\_workPortable\WhisperCpp\bins\cu-bin-blas12.4\whisper-cli.exe",
         r"C:\_workPortable\WhisperCpp\bins\cu-bin-blas11.8\whisper-cli.exe",
@@ -55,7 +60,7 @@ fn find_whisper_bin() -> String {
         r"C:\_workPortable\WhisperCpp\bins\bin-blas\whisper-cli.exe",
     ];
     for path in &candidates {
-        if Path::new(path).exists() {
+        if std::path::Path::new(path).exists() {
             return path.to_string();
         }
     }
@@ -127,9 +132,9 @@ pub struct WhisperEngine {
 }
 
 impl WhisperEngine {
-    pub fn new() -> Self {
+    pub fn new(bins_path: &str) -> Self {
         Self {
-            cli_path: find_whisper_bin(),
+            cli_path: find_whisper_bin(bins_path),
             detector_model: String::new(),
             transcriber_model: String::new(),
             language: "ru".to_string(),
