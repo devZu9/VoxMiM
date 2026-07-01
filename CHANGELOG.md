@@ -1,0 +1,89 @@
+# Changelog
+
+All notable changes to VoxMiM will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [0.2.0] — 2026-07-01
+
+### MVP — Push-to-talk → запись → whisper → текст → вставка
+
+#### Core
+- Переход с `whisper-rs` (FFI) на `whisper-cli.exe` subprocess с CUDA
+- Удалена зависимость `whisper-rs` (и `bindgen` с `libclang`)
+- Удалена зависимость `tray-icon` — трей на Win32 API (`NOTIFYICONDATAW`)
+- Удалён `phf` + `phf_codegen` — словарь загружается из файла при старте
+- Добавлены: `image` crate (загрузка PNG), `crossbeam-channel`
+
+#### Audio
+- Ресемплинг 48kHz → 16kHz (усреднение блоков)
+- Подбор частоты захвата (48000 → 32000 → 24000 → 16000 → 8000)
+- Сохранение частоты в config.json (не детектится при каждом запуске)
+- Отказ от `webrtc-audio-processing` (не собрался на Windows)
+
+#### STT
+- `whisper-cli.exe` из `cu-bin-blas12.4` с CUDA 12.4
+- Поддержка двух моделей: детектор (small) + транскрайбер (large)
+- Транскрипция через временный WAV-файл (stdin не поддерживался)
+
+#### Text Fixer
+- Словарь ~200K слов из `assets/ru_words_utf8.txt` (загрузка при старте)
+- `RwLock`-безопасное переключение языков в рантайме
+- Исправлен `is_short_token` — регистрозависимость (Заглавная И, У)
+- Исправлен double-push SymSpell в `space_fixer`
+- Исправлен UTF-8 crash в prefix check
+
+#### Input
+- **Глобальный хоткей:** Win32 `WH_KEYBOARD_LL` вместо `rdev` (работает без админ-прав)
+- **Сохрание/восстановление буфера обмена** — скопированный текст не затирается
+- Smart spacing через `EM_GETSEL` + `WM_GETTEXT`
+
+#### UI
+- **Трей на Win32 API:** `CreatePopupMenu`, `TrackPopupMenu` с `TPM_BOTTOMALIGN`
+- Меню: Версия, Настройки, VAD, Math Mode, Выход
+- Иконки: `blue-voice.png` (IDLE) / `microphone-stage-light.png` (RECORDING)
+- Message-заглушка для окна настроек
+- Иконки копируются в `target/debug/assets/` при сборке
+
+#### Commands
+- Парсинг VoxBee-формата команд (multilingual triggers)
+- Защита от ложного срабатывания — `command_max_words` (3+ слов = диктовка)
+
+#### Config
+- Миграция из VoxBee при первом запуске
+- Новые поля: `wake_mode`, `wake_words`, `detector_model`, `command_max_words`, `capture_sample_rate`
+- Автопоиск GGML-моделей в `C:\_workPortable\WhisperCpp\models\`
+
+### Fixed
+- UTF-8 panic в prefix check `space_fixer` (срез по байтам кириллицы)
+- Double-push SymSpell → дублирование слов ("Еще Иеще")
+- "И", "У" в начале предложения считались короткими токенами
+- Меню трея уходило за экран — `TPM_BOTTOMALIGN`
+- `SetForegroundWindow` redeclared warning
+- ClipBoard затирался после вставки — сохранение и восстановление
+- `unsafe_op_in_unsafe_fn` warnings (Rust 2024 edition)
+
+### Removed
+- `whisper-rs`, `whisper-rs-sys`, `bindgen` — не нужны, используем whisper-cli
+- `tray-icon` — заменён на Win32 API
+- `phf`, `phf_codegen` — словарь из файла
+- `rdev` для клавиатуры — заменён на `WH_KEYBOARD_LL`
+
+## [0.1.0] — Начальный каркас
+
+### Added (при переходе от VoxBee к VoxMiM)
+
+#### Core
+- Полный порт VoxBee с Python (3.11) на Rust (2024 edition)
+- Каркас проекта: модули audio, stt, vad, text, input, commands, ui
+- Конфиг в JSON через `serde` + `serde_json`
+
+#### STT
+- Интеграция `whisper-rs` (замена на whisper-cli в 0.2.0)
+
+#### UI
+- `tray-icon` (замена на Win32 API в 0.2.0)
+
+#### DevOps
+- `build.rs` с `phf_codegen` (удалён в 0.2.0)
