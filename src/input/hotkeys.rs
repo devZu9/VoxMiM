@@ -14,11 +14,17 @@ const WM_KEYDOWN: u32 = 0x0100;
 const WM_KEYUP: u32 = 0x0101;
 const WM_SYSKEYDOWN: u32 = 0x0104;
 const WM_SYSKEYUP: u32 = 0x0105;
+const LLKHF_INJECTED: u32 = 0x00000010;
 
 #[cfg(target_os = "windows")]
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, GetMessageW, SetWindowsHookExW, UnhookWindowsHookEx, MSG,
 };
+
+#[cfg(target_os = "windows")]
+unsafe extern "system" {
+    fn GetAsyncKeyState(vKey: i32) -> i16;
+}
 
 #[repr(C)]
 #[cfg(target_os = "windows")]
@@ -31,8 +37,6 @@ struct KBDLLHOOKSTRUCT {
     dwExtraInfo: usize,
 }
 
-#[cfg(target_os = "windows")]
-static HOOK_CTRL: AtomicBool = AtomicBool::new(false);
 #[cfg(target_os = "windows")]
 static HOOK_REC: AtomicBool = AtomicBool::new(false);
 #[cfg(target_os = "windows")]
@@ -54,7 +58,6 @@ impl HotkeyListener {
     #[cfg(target_os = "windows")]
     fn install_kbd_hook(tx: Sender<AppCommand>) -> Self {
         *HOOK_TX.lock().unwrap() = Some(tx);
-        HOOK_CTRL.store(false, Ordering::SeqCst);
         HOOK_REC.store(false, Ordering::SeqCst);
 
         let handle = std::thread::Builder::new()
@@ -159,30 +162,27 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: usize, lparam: isize) -> 
     }
 
     let kbd = unsafe { &*(lparam as *const KBDLLHOOKSTRUCT) };
+
+    // Игнорируем инжектированные события (SendInput и т.п.)
+    if kbd.flags & LLKHF_INJECTED != 0 {
+        return result;
+    }
+
     let vk = kbd.vkCode;
 
-    if vk == VK_CONTROL || vk == 0xA2 || vk == 0xA3 {
-        HOOK_CTRL.store(
-            msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN,
-            Ordering::SeqCst,
-        );
-        return result;
-    }
-
     if vk != VK_INSERT {
-        return result;
-    }
-
-    if !HOOK_CTRL.load(Ordering::SeqCst) {
         return result;
     }
 
     let is_down = msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN;
 
     if is_down && !HOOK_REC.load(Ordering::SeqCst) {
-        HOOK_REC.store(true, Ordering::SeqCst);
-        if let Some(ref tx) = *HOOK_TX.lock().unwrap() {
-            let _ = tx.send(AppCommand::StartRecording);
+        // Проверяем физическое состояние Ctrl напрямую у системы
+        if unsafe { GetAsyncKeyState(VK_CONTROL as i32) as u32 } & 0x8000 != 0 {
+            HOOK_REC.store(true, Ordering::SeqCst);
+            if let Some(ref tx) = *HOOK_TX.lock().unwrap() {
+                let _ = tx.send(AppCommand::StartRecording);
+            }
         }
     } else if !is_down && HOOK_REC.load(Ordering::SeqCst) {
         HOOK_REC.store(false, Ordering::SeqCst);

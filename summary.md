@@ -1,4 +1,4 @@
-# VoxMiM v0.3.0 — Итоговая сводка
+# VoxMiM v0.4.0 — Итоговая сводка
 
 ## Что сделано
 
@@ -17,9 +17,10 @@ Ctrl+Insert → запись → отпустить → whisper (GPU) → тек
 | Аудио-захват | ✅ | cpal (WASAPI), автоподбор частоты |
 | Распознавание | ✅ | whisper-cli, CUDA 12.4, RTX 3080 Ti |
 | Склейка слов | ✅ | 200K словарь + эвристики + SymSpell |
-| Глобальный хоткей | ✅ | Win32 WH_KEYBOARD_LL (Ctrl+Insert) |
+| Глобальный хоткей | ✅ | Win32 WH_KEYBOARD_LL, GetAsyncKeyState (без рассинхронизации) |
 | Вставка текста | ✅ | Win32 Clipboard + Save/Restore |
-| Трей-иконка | ✅ | Win32 NOTIFYICONDATAW + меню |
+| Трей-иконка | ✅ | Win32 NOTIFYICONDATAW + переключение IDLE/RECORDING/загрузка |
+| Иконка загрузки | ✅ | hourglass-fill.png мигает до готовности моделей |
 | Команды голосом | ✅ | 199 команд из VoxBee |
 | Буфер обмена | ✅ | Сохраняется и восстанавливается |
 | Smart Spacing | ✅ | AUTO-пробел перед вставкой |
@@ -42,6 +43,8 @@ Ctrl+Insert → запись → отпустить → whisper (GPU) → тек
 assets/
 ├── blue-voice.png            # Иконка трея (IDLE)
 ├── microphone-stage-light.png# Иконка трея (RECORDING)
+├── hourglass-fill.png        # Иконка трея (загрузка)
+├── hand-palm.png             # Запасная иконка загрузки
 ├── vox-mim.ico               # Иконка .exe
 ├── ru_words_utf8.txt         # Словарь ~2.4M слов (выборка 200K)
 ├── russian.txt               # Исходный словарь cp1251

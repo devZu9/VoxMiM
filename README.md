@@ -71,6 +71,10 @@ target\release\voxmim.exe
 
 Положите в папку и укажите путь в `config.json`.
 
+### Словари
+
+Словарь русских словоформ (~200K записей) получен из репозитория [danakt/russian-words](https://github.com/danakt/russian-words) (исходно ~1.5M словоформ, лицензия MIT). Файлы `assets/russian.txt` и `assets/russian_surnames.txt` — оригиналы в cp1251. При необходимости можно использовать полный словарь (все 1.5M+) — пока работает и на выборке 200K.
+
 ## Архитектура
 
 ```
@@ -81,6 +85,20 @@ CUDA: cu-bin-blas12.4 (pre-built DLL)
 Трей: Win32 NOTIFYICONDATAW + CreatePopupMenu
 Хоткей: WH_KEYBOARD_LL (без прав администратора)
 ```
+
+### whisper.cpp
+
+VoxMiM использует:
+- **Бинарник `whisper-cli.exe`** — загружается автоматически из [релизов whisper.cpp](https://github.com/ggml-org/whisper.cpp/releases) (cu-bin-blas12.4 для CUDA 12.4)
+- **GGML-модели** — скачиваются вручную с [huggingface.co/ggerganov/whisper.cpp](https://huggingface.co/ggerganov/whisper.cpp/tree/main)
+
+## Полезные ссылки
+
+| Ресурс | Ссылка |
+|---|---|
+| Словарь русских слов | [danakt/russian-words](https://github.com/danakt/russian-words) |
+| whisper.cpp релизы (бинарник) | [github.com/ggml-org/whisper.cpp/releases](https://github.com/ggml-org/whisper.cpp/releases) |
+| GGML-модели Whisper | [huggingface.co/ggerganov/whisper.cpp](https://huggingface.co/ggerganov/whisper.cpp/tree/main) |
 
 ## Лицензия
 

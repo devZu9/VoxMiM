@@ -1,13 +1,18 @@
 use crate::app::AppCommand;
 use crossbeam_channel::Sender;
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 
 const WM_APP: u32 = 0x8000;
 const WM_TRAYICON: u32 = WM_APP + 1;
 const WM_RBUTTONUP: u32 = 0x0205;
 const WM_COMMAND: u32 = 0x0111;
+const WM_TIMER: u32 = 0x0113;
 const WM_DESTROY: u32 = 0x0002;
 const WM_NULL: u32 = 0x0000;
+
+const NIM_MODIFY: u32 = 0x00000001;
+const TIMER_ID: usize = 1;
 
 const CMD_SETTINGS: u32 = 1000;
 const CMD_CONSOLE: u32 = 1004;
@@ -44,6 +49,11 @@ unsafe extern "system" {
         hInstance: *mut std::ffi::c_void, nWidth: i32, nHeight: i32,
         cPlanes: u8, cBitsPerPixel: u8, lpbANDbits: *const u8, lpbXORbits: *const u8,
     ) -> *mut std::ffi::c_void;
+    fn SetTimer(
+        hWnd: *mut std::ffi::c_void, nIDEvent: usize, uElapse: u32,
+        lpTimerFunc: Option<unsafe extern "system" fn(*mut std::ffi::c_void, u32, usize, u32)>,
+    ) -> usize;
+    fn KillTimer(hWnd: *mut std::ffi::c_void, nIDEvent: usize) -> i32;
 }
 
 #[allow(non_snake_case)]
@@ -116,12 +126,25 @@ const TPM_RIGHTBUTTON: u32 = 0x00000002;
 const TPM_BOTTOMALIGN: u32 = 0x00000020;
 
 static TRAY_TX: Mutex<Option<Sender<AppCommand>>> = Mutex::new(None);
+static TRAY_RECORDING: Mutex<Option<Arc<AtomicBool>>> = Mutex::new(None);
+static TRAY_READY: Mutex<Option<Arc<AtomicBool>>> = Mutex::new(None);
+static TRAY_GUID: Mutex<Option<[u8; 16]>> = Mutex::new(None);
+static TRAY_HWND: AtomicUsize = AtomicUsize::new(0);
+static TRAY_HICON_IDLE: AtomicUsize = AtomicUsize::new(0);
+static TRAY_HICON_REC: AtomicUsize = AtomicUsize::new(0);
+static TRAY_HICON_LOADING: AtomicUsize = AtomicUsize::new(0);
+static TRAY_HICON_BLANK: AtomicUsize = AtomicUsize::new(0);
+static TRAY_IS_RECORDING: AtomicBool = AtomicBool::new(false);
+static TRAY_BLINK_TOGGLE: AtomicBool = AtomicBool::new(false);
+static TRAY_HAS_READY: AtomicBool = AtomicBool::new(false);
 
 pub struct TrayManager;
 
 impl TrayManager {
-    pub fn new(cmd_tx: Sender<AppCommand>, _recording: std::sync::Arc<std::sync::atomic::AtomicBool>) -> Self {
+    pub fn new(cmd_tx: Sender<AppCommand>, recording: Arc<AtomicBool>, ready: Arc<AtomicBool>) -> Self {
         *TRAY_TX.lock().unwrap() = Some(cmd_tx);
+        *TRAY_RECORDING.lock().unwrap() = Some(recording);
+        *TRAY_READY.lock().unwrap() = Some(ready);
         Self
     }
 
@@ -152,7 +175,16 @@ impl TrayManager {
                 instance, std::ptr::null_mut(),
             );
 
-            let hicon = load_hicon("blue-voice.png");
+            let hicon_idle = load_hicon("blue-voice.png");
+            let hicon_rec = load_hicon("microphone-stage-light.png");
+            let hicon_loading = load_hicon("hourglass-fill.png");
+            let hicon_blank = make_blank_icon();
+
+            TRAY_HWND.store(hwnd as usize, Ordering::SeqCst);
+            TRAY_HICON_IDLE.store(hicon_idle as usize, Ordering::SeqCst);
+            TRAY_HICON_REC.store(hicon_rec as usize, Ordering::SeqCst);
+            TRAY_HICON_LOADING.store(hicon_loading as usize, Ordering::SeqCst);
+            TRAY_HICON_BLANK.store(hicon_blank as usize, Ordering::SeqCst);
 
             let mut nid: NOTIFYICONDATAW = std::mem::zeroed();
             nid.cbSize = std::mem::size_of::<NOTIFYICONDATAW>() as u32;
@@ -160,7 +192,7 @@ impl TrayManager {
             nid.uID = 1;
             nid.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_GUID;
             nid.uCallbackMessage = WM_TRAYICON;
-            nid.hIcon = hicon;
+            nid.hIcon = hicon_loading;
             nid.guidItem = [0x21, 0x43, 0x65, 0x87, 0x12, 0x34, 0x56, 0x78, 0xAB, 0xCD, 0xEF, 0x01, 0x23, 0x45, 0x67, 0x89];
 
             let tip: Vec<u16> = "VoxMiM\0".encode_utf16().collect();
@@ -170,6 +202,9 @@ impl TrayManager {
 
             Shell_NotifyIconW(NIM_ADD, &nid);
             log::info!("Трей-иконка запущена");
+
+            *TRAY_GUID.lock().unwrap() = Some(nid.guidItem);
+            SetTimer(hwnd, TIMER_ID, 300, None);
 
             let mut msg: MSG = std::mem::zeroed();
             while GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0) != 0 {
@@ -190,6 +225,54 @@ unsafe extern "system" fn wnd_proc(
             let event = (lparam & 0xFFFF) as u32;
             if event == WM_RBUTTONUP {
                 unsafe { show_menu(hwnd); }
+            }
+            return 0;
+        }
+        WM_TIMER => {
+            if wparam == TIMER_ID {
+                unsafe {
+                    let ready = TRAY_READY.lock().unwrap()
+                        .as_ref()
+                        .map(|r| r.load(Ordering::SeqCst))
+                        .unwrap_or(false);
+
+                    let hicon = if !ready {
+                        TRAY_HAS_READY.store(false, Ordering::SeqCst);
+                        let prev = TRAY_BLINK_TOGGLE.fetch_xor(true, Ordering::SeqCst);
+                        if prev {
+                            TRAY_HICON_LOADING.load(Ordering::SeqCst)
+                        } else {
+                            TRAY_HICON_BLANK.load(Ordering::SeqCst)
+                        }
+                    } else {
+                        let first_ready = !TRAY_HAS_READY.swap(true, Ordering::SeqCst);
+                        let rec = TRAY_RECORDING.lock().unwrap()
+                            .as_ref()
+                            .map(|r| r.load(Ordering::SeqCst))
+                            .unwrap_or(false);
+                        let prev = TRAY_IS_RECORDING.load(Ordering::SeqCst);
+                        if rec == prev && !first_ready {
+                            return 0;
+                        }
+                        TRAY_IS_RECORDING.store(rec, Ordering::SeqCst);
+                        if rec {
+                            TRAY_HICON_REC.load(Ordering::SeqCst)
+                        } else {
+                            TRAY_HICON_IDLE.load(Ordering::SeqCst)
+                        }
+                    } as *mut std::ffi::c_void;
+
+                    let guid = TRAY_GUID.lock().unwrap()
+                        .unwrap_or([0; 16]);
+                    let mut mnid: NOTIFYICONDATAW = std::mem::zeroed();
+                    mnid.cbSize = std::mem::size_of::<NOTIFYICONDATAW>() as u32;
+                    mnid.hWnd = TRAY_HWND.load(Ordering::SeqCst) as *mut std::ffi::c_void;
+                    mnid.uID = 1;
+                    mnid.uFlags = NIF_ICON | NIF_GUID;
+                    mnid.hIcon = hicon;
+                    mnid.guidItem = guid;
+                    Shell_NotifyIconW(NIM_MODIFY, &mnid);
+                }
             }
             return 0;
         }
@@ -223,7 +306,10 @@ unsafe extern "system" fn wnd_proc(
             return 0;
         }
         WM_DESTROY => {
-            unsafe { PostQuitMessage(0); }
+            unsafe {
+                KillTimer(hwnd, TIMER_ID);
+                PostQuitMessage(0);
+            }
             return 0;
         }
         _ => {}
@@ -364,4 +450,9 @@ fn create_hicon(rgba: &[u8], width: u32, height: u32) -> *mut std::ffi::c_void {
         }
         icon
     }
+}
+
+fn make_blank_icon() -> *mut std::ffi::c_void {
+    let rgba = vec![0u8; 4];
+    create_hicon(&rgba, 1, 1)
 }

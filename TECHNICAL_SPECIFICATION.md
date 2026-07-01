@@ -300,7 +300,7 @@ for each adjacent pair (w1, w2):
 - Формат: UTF-8, одно слово на строку
 - Загрузка: при старте, `RwLock<HashSet<String>>`
 - Переключение: `dict.load_lang("en")` — без перезапуска
-- Источник: danakt/russian-words (2.4M словоформ → выборка 200K)
+- Источник: [danakt/russian-words](https://github.com/danakt/russian-words) (MIT) — исходно ~1.5M словоформ + ~877K фамилий в cp1251 (`assets/russian.txt`, `assets/russian_surnames.txt`). Из них отобрано ~200K наиболее употребительных. При необходимости можно загрузить полный словарь без потери производительности — HashSet поиск остаётся O(1).
 
 ---
 
@@ -418,6 +418,14 @@ CUDA DLL копируются в `target/debug/` при сборке через 
 
 ---
 
-## 12. Лицензия
+## 12. Полезные ссылки
+
+| Ресурс | Ссылка | Назначение |
+|---|---|---|
+| danakt/russian-words | [github.com/danakt/russian-words](https://github.com/danakt/russian-words) | Исходный словарь русских словоформ ~1.5M (MIT) |
+| whisper.cpp релизы | [github.com/ggml-org/whisper.cpp/releases](https://github.com/ggml-org/whisper.cpp/releases) | Бинарник whisper-cli.exe (cu-bin-blas12.4) |
+| GGML-модели Whisper | [huggingface.co/ggerganov/whisper.cpp](https://huggingface.co/ggerganov/whisper.cpp/tree/main) | GGML-файлы моделей (large-v3, small, tiny) |
+
+## 13. Лицензия
 
 GNU General Public License v3.0 (как и оригинальный VoxBee).

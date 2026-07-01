@@ -5,6 +5,27 @@ All notable changes to VoxMiM will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] — 2026-07-01
+
+### Иконка трея + исправление горячей клавиши + анимация загрузки
+
+#### UI
+- **Переключение иконок:** IDLE (`blue-voice.png`) ↔ RECORDING (`microphone-stage-light.png`) — через `WM_TIMER` каждые 300мс
+- **Анимация загрузки:** `hourglass-fill.png` мигает каждые 600мс, пока не загружены модели Whisper
+- **Флаг готовности:** трей стартует сразу (ещё до загрузки моделей); после `ready = true` переключается на `blue-voice.png`
+- Исправлен `NIM_MODIFY` — добавлен `NIF_GUID` + `guidItem` для корректного обновления иконки
+- `build.rs` — фикс предупреждения `unused_must_use` для `embed_resource::compile`
+
+#### Hotkeys
+- **Убран `HOOK_CTRL`** — предыдущий хранил состояние Ctrl и сбивался injected-событиями от `send_ctrl_v()`
+- **`GetAsyncKeyState`** — проверка физического состояния Ctrl в момент нажатия Insert (а не хранимого флага)
+- **`LLKHF_INJECTED`** — инжектированные SendInput-события игнорируются хук-процедурой
+- Конфигурируемые хоткеи в будущем — `GetAsyncKeyState` не привязан к Ctrl+Insert
+
+#### Docs
+- `README.md` — добавлен раздел «Словари», таблица «Полезные ссылки» (danakt, whisper.cpp, huggingface)
+- `TECHNICAL_SPECIFICATION.md` — обновлён раздел 5.3 (словарь), добавлен раздел 12 «Полезные ссылки»
+
 ## [0.3.0] — 2026-07-01
 
 ### Исправление консоли + автозагрузка бинарников

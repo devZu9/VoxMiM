@@ -61,6 +61,22 @@ impl App {
         let (cmd_tx, cmd_rx) = crossbeam_channel::unbounded();
         let (whisper_tx, whisper_rx) = crossbeam_channel::unbounded::<Vec<f32>>();
 
+        // Трей — запускаем сразу с иконкой загрузки
+        let recording = Arc::new(AtomicBool::new(false));
+        let ready = Arc::new(AtomicBool::new(false));
+        {
+            let tray_tx = cmd_tx.clone();
+            let tray_rec = recording.clone();
+            let tray_ready = ready.clone();
+            std::thread::Builder::new()
+                .name("tray".into())
+                .spawn(move || {
+                    let tray = TrayManager::new(tray_tx, tray_rec, tray_ready);
+                    tray.run();
+                })
+                .ok();
+        }
+
         let mut executor = CommandExecutor::new();
         if let Some(ref path) = config.commands_path {
             executor.load_commands(path);
@@ -108,6 +124,9 @@ impl App {
             }
         }
 
+        ready.store(true, Ordering::SeqCst);
+        log::info!("Готов к работе");
+
         // Аудио-захват
         let mut audio = AudioCapture::new();
         let devices = AudioCapture::list_devices();
@@ -148,7 +167,6 @@ impl App {
         }
 
         // Push-to-talk: накопление
-        let recording = Arc::new(AtomicBool::new(false));
         let audio_buf: Arc<Mutex<Vec<f32>>> = Arc::new(Mutex::new(Vec::new()));
         let rec_flag = recording.clone();
         let buf = audio_buf.clone();
@@ -256,17 +274,6 @@ impl App {
                 log::info!("Wake word: {wake_words:?}");
             }
         }
-
-        // Трей
-        let tray_tx = cmd_tx.clone();
-        let tray_rec = recording.clone();
-        std::thread::Builder::new()
-            .name("tray".into())
-            .spawn(move || {
-                let tray = TrayManager::new(tray_tx, tray_rec);
-                tray.run();
-            })
-            .ok();
 
         // Хоткей
         let hotkey = HotkeyListener::new(cmd_tx.clone(), config.trigger.button.clone());

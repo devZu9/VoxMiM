@@ -6,7 +6,7 @@ fn main() {
     // Встраиваем иконку в .exe
     #[cfg(target_os = "windows")]
     {
-        embed_resource::compile("resource/resource.rc", embed_resource::NONE);
+        let _ = embed_resource::compile("resource/resource.rc", embed_resource::NONE);
     }
     copy_assets();
 }
