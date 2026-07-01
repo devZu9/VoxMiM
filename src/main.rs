@@ -44,11 +44,30 @@ fn single_instance() -> bool {
             bInitialOwner: i32,
             lpName: *const u16,
         ) -> isize;
+        fn GetLastError() -> u32;
+        fn WaitForSingleObject(hHandle: isize, dwMilliseconds: u32) -> u32;
+        fn CloseHandle(hObject: isize) -> i32;
     }
+
+    const ERROR_ALREADY_EXISTS: u32 = 183;
+    const WAIT_ABANDONED: u32 = 0x00000080;
 
     let name: Vec<u16> = "Local\\VoxMiM-SingleInstance\0".encode_utf16().collect();
     let handle = unsafe { CreateMutexW(std::ptr::null(), 1, name.as_ptr()) };
-    handle != 0
+    if handle == 0 {
+        return false;
+    }
+
+    let err = unsafe { GetLastError() };
+    if err == ERROR_ALREADY_EXISTS {
+        let wait = unsafe { WaitForSingleObject(handle, 0) };
+        unsafe { CloseHandle(handle) };
+        // WAIT_ABANDONED — старый процесс крашнулся, можем запускаться
+        // WAIT_TIMEOUT — другой процесс жив
+        wait == WAIT_ABANDONED
+    } else {
+        true
+    }
 }
 
 #[cfg(not(target_os = "windows"))]

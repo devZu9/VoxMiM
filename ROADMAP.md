@@ -137,6 +137,7 @@
 
 ## Технический долг / Backlog ⚪
 
+- [ ] **HTTP API** — сервер для приёма WAV → whisper → fix_text → JSON (порт из конфига, неблокирующий для PTT)
 - [ ] Авто-скачивание моделей Whisper
 - [ ] Поддержка macOS (Core Audio + CGEvent вместо Win32)
 - [ ] Поддержка Linux (PulseAudio/ALSA + X11)

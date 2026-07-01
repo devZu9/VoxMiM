@@ -5,6 +5,28 @@ All notable changes to VoxMiM will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] — 2026-07-01
+
+### Portable-сборка + single-instance + фильтр галлюцинаций
+
+#### Core
+- **Portable-сборка:** все пути относительно `.exe`, `%APPDATA%` не используется. Папки: `dicts/` (словари), `bins/` (CUDA DLL + whisper-cli), `models/` (GGML)
+- **Single-instance:** исправлен `CreateMutexW` — добавлен `WaitForSingleObject` с проверкой `WAIT_ABANDONED`. Больше не пропускает второй процесс, но корректно восстанавливается после краша
+- **Грациозный выход:** `std::process::exit(0)` заменён на `PostMessageW(WM_DESTROY)` → трей сам удаляет иконку, процесс завершается нормально
+- **Иконки вшиты в .exe:** `include_bytes!` вместо чтения PNG с диска. Папка `assets/` не нужна
+- **Удалена зависимость `directories`** — больше не используем `ProjectDirs`
+- **Удалена папка `data/`** (пустая)
+
+#### Text Fixer
+- **Кастомные галлюцинации:** `load_custom_phrases()` читает `dicts/hallucinations.txt`, мержит со встроенным списком. Если файла нет — создаётся с примерами. Пользователь может редактировать
+- **Фильтр суффиксов:** галлюцинации удаляются только в конце текста, не трогая обычные слова в середине
+
+#### Docs
+- `TECHNICAL_SPECIFICATION.md` — добавлен раздел 12 «HTTP API (план)»
+- `ROADMAP.md` — обновлён backlog (HTTP API, авто-скачивание моделей)
+- `summary.md` — обновлена версия, добавлены новые файлы
+- `opencode.json` — добавлен LSP (`rust-analyzer`), убран MCP
+
 ## [0.4.0] — 2026-07-01
 
 ### Иконка трея + исправление горячей клавиши + анимация загрузки

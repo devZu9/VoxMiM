@@ -1,6 +1,24 @@
-use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+
+fn exe_dir() -> PathBuf {
+    std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+        .unwrap_or_else(|| PathBuf::from("."))
+}
+
+fn dicts_dir() -> PathBuf {
+    exe_dir().join("dicts")
+}
+
+fn models_dir() -> PathBuf {
+    exe_dir().join("models")
+}
+
+fn bins_dir() -> PathBuf {
+    exe_dir().join("bins")
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -70,10 +88,8 @@ pub struct TextFixConfig {
 
 impl Default for Config {
     fn default() -> Self {
-        let dirs = ProjectDirs::from("com", "voxmim", "VoxMiM")
-            .expect("Не удалось определить пути проекта");
-        let data_dir = dirs.data_dir().to_path_buf();
-        let config_dir = dirs.config_dir().to_path_buf();
+        let models = models_dir();
+        let dicts = dicts_dir();
 
         let known_models = [
             r"C:\_workPortable\WhisperCpp\models\ggml-large-v3-russian.bin",
@@ -83,7 +99,7 @@ impl Default for Config {
         let model_path = known_models.iter()
             .find(|p| std::path::Path::new(p).exists())
             .map(|p| std::path::PathBuf::from(p))
-            .unwrap_or_else(|| data_dir.join("models").join("ggml-tiny.bin"));
+            .unwrap_or_else(|| models.join("ggml-tiny.bin"));
 
         let has_cuda = std::path::Path::new(r"C:\_workPortable\WhisperCpp\bins\cu-bin-blas12.4\ggml-cuda.dll").exists();
         let detector_default = model_path.clone();
@@ -122,7 +138,7 @@ impl Default for Config {
             mouse_step: 150,
             log_enabled: false,
             log_dir: None,
-            whisper_bins_path: None,
+            whisper_bins_path: Some(bins_dir().to_string_lossy().to_string()),
             capture_sample_rate: None,
             wake_mode: false,
             wake_words: vec!["слушай".to_string(), "бро запиши".to_string(), "записывай".to_string()],
@@ -138,19 +154,16 @@ impl Default for Config {
             best_of: 5,
             entropy_thold: 2.4,
             temperature: 0.0,
-            commands_path: Some(config_dir.join("commands.json")),
-            aliases_path: Some(config_dir.join("aliases.json")),
-            user_dict_path: Some(config_dir.join("user_dict.json")),
+            commands_path: Some(dicts.join("commands.json")),
+            aliases_path: Some(dicts.join("aliases.json")),
+            user_dict_path: Some(dicts.join("user_dict.json")),
         }
     }
 }
 
 impl Config {
     pub fn load() -> Self {
-        let dirs = ProjectDirs::from("com", "voxmim", "VoxMiM")
-            .expect("Не удалось определить пути проекта");
-        let config_dir = dirs.config_dir();
-        let config_path = config_dir.join("config.json");
+        let config_path = exe_dir().join("config.json");
 
         let mut cfg = 'load: {
             if config_path.exists() {
@@ -233,8 +246,7 @@ impl Config {
             self.use_gpu = gpu;
         }
         if let Some(model) = v.get("model_name").and_then(|v| v.as_str()) {
-            let dirs = ProjectDirs::from("com", "voxmim", "VoxMiM").unwrap();
-            let path = dirs.data_dir().join("models").join(model);
+            let path = models_dir().join(model);
             if path.exists() {
                 self.model_path = path;
             } else {
@@ -265,7 +277,7 @@ impl Config {
             self.vad.aggressiveness = vad_aggr as u32;
         }
         if let Some(vad_sil) = v.get("vad_silence_duration").and_then(|v| v.as_f64()) {
-            self.vad.silence_duration_secs = vad_sil as f32;
+            self.vad.silence_duration_secs = vad_sil as f64 as f32;
         }
         if let Some(short) = v.get("vad_accept_short_speech").and_then(|v| v.as_bool()) {
             self.vad.accept_short_speech = short;
@@ -277,7 +289,7 @@ impl Config {
             self.warmup_on_start = warmup;
         }
         if let Some(pre) = v.get("pre_buffer_sec").and_then(|v| v.as_f64()) {
-            self.pre_buffer_secs = pre as f32;
+            self.pre_buffer_secs = pre as f64 as f32;
         }
         if let Some(max) = v.get("max_duration_sec").and_then(|v| v.as_u64()) {
             self.max_duration_sec = max as u32;
@@ -319,12 +331,10 @@ impl Config {
     }
 
     pub fn save(&self) -> Result<(), Box<dyn std::error::Error>> {
-        let dirs = ProjectDirs::from("com", "voxmim", "VoxMiM")
-            .expect("Не удалось определить пути проекта");
-        let config_dir = dirs.config_dir();
-        std::fs::create_dir_all(config_dir)?;
+        let exe = exe_dir();
+        std::fs::create_dir_all(&exe)?;
         let content = serde_json::to_string_pretty(self)?;
-        std::fs::write(config_dir.join("config.json"), content)?;
+        std::fs::write(exe.join("config.json"), content)?;
         Ok(())
     }
 }
@@ -333,5 +343,11 @@ pub fn ensure_paths(cfg: &Config) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(parent) = cfg.model_path.parent() {
         std::fs::create_dir_all(parent)?;
     }
+    std::fs::create_dir_all(dicts_dir())?;
+    std::fs::create_dir_all(bins_dir())?;
     Ok(())
+}
+
+pub fn dicts_path() -> PathBuf {
+    dicts_dir()
 }

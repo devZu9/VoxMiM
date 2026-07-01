@@ -1,4 +1,4 @@
-# VoxMiM v0.4.0 — Итоговая сводка
+# VoxMiM v0.5.0 — Итоговая сводка
 
 ## Что сделано
 
@@ -27,6 +27,10 @@ Ctrl+Insert → запись → отпустить → whisper (GPU) → тек
 | Console toggle | ✅ | Показать/скрыть консоль из трея |
 | Иконка .exe | ✅ | vox-mim.ico вшита в бинарник |
 | Авто-загрузка | ✅ | whisper-cli скачивается при первом запуске |
+| Portable сборка | ✅ | Всё в папке с .exe: config, dicts, bins, models |
+| Single-instance | ✅ | WaitForSingleObject + WAIT_ABANDONED |
+| Кастомные галлюцинации | ✅ | hallucinations.txt в dicts/ |
+| Грациозный выход | ✅ | Нормальное завершение через WM_DESTROY |
 
 ### Архитектура
 
@@ -41,12 +45,12 @@ Ctrl+Insert → запись → отпустить → whisper (GPU) → тек
 
 ```
 assets/
-├── blue-voice.png            # Иконка трея (IDLE)
-├── microphone-stage-light.png# Иконка трея (RECORDING)
-├── hourglass-fill.png        # Иконка трея (загрузка)
+├── blue-voice.png            # Иконка трея (IDLE) — вшивается в .exe
+├── microphone-stage-light.png# Иконка трея (RECORDING) — вшивается в .exe
+├── hourglass-fill.png        # Иконка трея (загрузка) — вшивается в .exe
 ├── hand-palm.png             # Запасная иконка загрузки
 ├── vox-mim.ico               # Иконка .exe
-├── ru_words_utf8.txt         # Словарь ~2.4M слов (выборка 200K)
+├── ru_words_utf8.txt         # Словарь ~2.4M слов (копируется в dicts/)
 ├── russian.txt               # Исходный словарь cp1251
 └── russian_surnames.txt      # Фамилии cp1251
 
@@ -81,7 +85,7 @@ src/
 
 ### Тесты
 
-- **18 unit-тестов** — все проходят
+- **21 unit-тест** — все проходят
 - Модули: space_fixer, hallucinations, repetitions, punctuation, math, vad
 
 ### Сборка
@@ -89,11 +93,12 @@ src/
 ```bash
 cargo build              # debug (без LIBCLANG_PATH)
 cargo build --release    # release с LTO
-cargo test               # 18 тестов
+cargo test               # 21 тест
 ```
 
 ## Что не сделано / Backlog
 
+- [ ] **HTTP API** — сервер приёма WAV → whisper → fix_text → JSON (порт из конфига)
 - [ ] **Окно настроек** (egui) — заглушка через MessageBox
 - [ ] **VAD-режим** — детектор написан, не подключён к пайплайну
 - [ ] **Wake word** — код готов, требует `wake_mode: true` + модель

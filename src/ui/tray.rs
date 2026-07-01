@@ -140,6 +140,15 @@ static TRAY_HAS_READY: AtomicBool = AtomicBool::new(false);
 
 pub struct TrayManager;
 
+pub fn request_exit() {
+    let hwnd = TRAY_HWND.load(Ordering::SeqCst) as *mut std::ffi::c_void;
+    if !hwnd.is_null() {
+        unsafe {
+            let _ = PostMessageW(hwnd, WM_DESTROY, 0, 0);
+        }
+    }
+}
+
 impl TrayManager {
     pub fn new(cmd_tx: Sender<AppCommand>, recording: Arc<AtomicBool>, ready: Arc<AtomicBool>) -> Self {
         *TRAY_TX.lock().unwrap() = Some(cmd_tx);
@@ -175,9 +184,9 @@ impl TrayManager {
                 instance, std::ptr::null_mut(),
             );
 
-            let hicon_idle = load_hicon("blue-voice.png");
-            let hicon_rec = load_hicon("microphone-stage-light.png");
-            let hicon_loading = load_hicon("hourglass-fill.png");
+            let hicon_idle = icon_from_bytes(include_bytes!("../../assets/blue-voice.png"));
+            let hicon_rec = icon_from_bytes(include_bytes!("../../assets/microphone-stage-light.png"));
+            let hicon_loading = icon_from_bytes(include_bytes!("../../assets/hourglass-fill.png"));
             let hicon_blank = make_blank_icon();
 
             TRAY_HWND.store(hwnd as usize, Ordering::SeqCst);
@@ -367,46 +376,17 @@ unsafe fn show_menu(hwnd: *mut std::ffi::c_void) {
     }
 }
 
-fn load_hicon(name: &str) -> *mut std::ffi::c_void {
-    let paths = [
-        std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|p| p.join("assets").join(name))),
-        Some(std::path::PathBuf::from("assets").join(name)),
-    ];
-
-    for path in paths.into_iter().flatten() {
-        if path.exists() {
-            if let Ok(data) = std::fs::read(&path) {
-                if let Ok(img) = image::load_from_memory(&data) {
-                    let rgba = img.to_rgba8();
-                    let (w, h) = rgba.dimensions();
-                    let pixels = rgba.into_raw();
-                    let hicon = create_hicon(&pixels, w, h);
-                    if !hicon.is_null() {
-                        return hicon;
-                    }
-                }
-            }
+fn icon_from_bytes(data: &[u8]) -> *mut std::ffi::c_void {
+    if let Ok(img) = image::load_from_memory(data) {
+        let rgba = img.to_rgba8();
+        let (w, h) = rgba.dimensions();
+        let pixels = rgba.into_raw();
+        let hicon = create_hicon(&pixels, w, h);
+        if !hicon.is_null() {
+            return hicon;
         }
     }
-
-    let size = 32;
-    let mut rgba = Vec::with_capacity((size * size * 4) as usize);
-    for y in 0..size {
-        for x in 0..size {
-            let cx = size as i32 / 2;
-            let cy = size as i32 / 2;
-            let dx = (x as i32 - cx).abs();
-            let dy = (y as i32 - cy).abs();
-            if dx * dx + dy * dy < (size as i32 / 3).pow(2) || y as i32 > cy + size as i32 / 4 && dx < size as i32 / 6 {
-                rgba.extend_from_slice(&[64, 160, 255, 255]);
-            } else {
-                rgba.extend_from_slice(&[0, 0, 0, 0]);
-            }
-        }
-    }
-    create_hicon(&rgba, size, size)
+    std::ptr::null_mut()
 }
 
 fn create_hicon(rgba: &[u8], width: u32, height: u32) -> *mut std::ffi::c_void {

@@ -418,7 +418,54 @@ CUDA DLL копируются в `target/debug/` при сборке через 
 
 ---
 
-## 12. Полезные ссылки
+## 12. HTTP API (план)
+
+Запланированный модуль `api/server.rs` для интеграции с внешними программами.
+
+### Принцип
+
+```
+POST /transcribe
+Content-Type: audio/wav
+Body: <WAV-файл (16kHz, mono, f32 или s16)>
+
+→ 200 OK
+{"text": "распознанный текст"}
+```
+
+### Конфиг
+
+```json
+{
+  "api_port": 8765
+}
+```
+
+Если `api_port` не задан (`null`) — сервер не запускается, программа работает в штатном PTT-режиме.
+
+### Стек
+
+- `tiny_http` — минимальная HTTP-библиотека (нет extern-зависимостей за её пределами)
+- Эндпоинт: `POST /transcribe` — принимает WAV → `WhisperEngine::transcribe()` → `fix_text()` → JSON
+- Поток: отдельный, использует `Arc<WhisperEngine>` и `Arc<Dictionary>` из `App`
+
+### Применение
+
+```bash
+curl -X POST --data-binary @speech.wav http://localhost:8765/transcribe
+```
+
+Из Python:
+
+```python
+import requests
+r = requests.post("http://localhost:8765/transcribe", data=open("speech.wav", "rb"))
+print(r.json()["text"])
+```
+
+Не влияет на PTT-режим — работают параллельно.
+
+## 13. Полезные ссылки
 
 | Ресурс | Ссылка | Назначение |
 |---|---|---|

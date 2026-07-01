@@ -282,6 +282,10 @@ impl App {
         let dict = Dictionary::new();
         dict.load_lang(&config.language);
 
+        // Кастомные фразы галлюцинаций
+        let h_path = crate::config::dicts_path().join("hallucinations.txt");
+        crate::text::load_custom_phrases(&h_path);
+
         Self {
             state: AppState::Idle,
             config,
@@ -300,22 +304,27 @@ impl App {
 
     pub fn run(mut self) {
         log::info!("VoxMiM запущен");
-        loop {
-            match self.cmd_rx.recv() {
-                Ok(cmd) => self.handle_command(cmd),
-                Err(_) => break,
+        while let Ok(cmd) = self.cmd_rx.recv() {
+            if !self.handle_command(cmd) {
+                break;
             }
         }
+        // Даём трей-потоку время удалить иконку
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        log::info!("VoxMiM завершён");
     }
 
-    fn handle_command(&mut self, cmd: AppCommand) {
+    fn handle_command(&mut self, cmd: AppCommand) -> bool {
         match cmd {
-            AppCommand::StartRecording => self.on_start(),
-            AppCommand::StopRecording => self.on_stop(),
-            AppCommand::RecordingResult(text) => self.on_result(&text),
-            AppCommand::OpenSettings => self.on_open_settings(),
-            AppCommand::Quit => std::process::exit(0),
-            _ => log::debug!("Команда: {:?}", cmd),
+            AppCommand::StartRecording => { self.on_start(); true }
+            AppCommand::StopRecording => { self.on_stop(); true }
+            AppCommand::RecordingResult(text) => { self.on_result(&text); true }
+            AppCommand::OpenSettings => { self.on_open_settings(); true }
+            AppCommand::Quit => {
+                crate::ui::tray::request_exit();
+                false
+            }
+            _ => { log::debug!("Команда: {:?}", cmd); true }
         }
     }
 

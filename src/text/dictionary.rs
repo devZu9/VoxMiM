@@ -16,14 +16,14 @@ impl Dictionary {
     }
 
     pub fn load_lang(&self, lang: &str) {
-        let path = format!("assets/{lang}_words_utf8.txt");
+        let fname = format!("{lang}_words_utf8.txt");
 
         let mut set = HashSet::new();
         let paths = [
             std::env::current_exe()
                 .ok()
-                .and_then(|p| p.parent().map(|p| p.join("assets").join(format!("{lang}_words_utf8.txt")))),
-            Some(std::path::PathBuf::from(&path)),
+                .and_then(|p| p.parent().map(|p| p.join("dicts").join(&fname))),
+            Some(std::path::PathBuf::from("dicts").join(&fname)),
         ];
 
         let mut loaded = false;
@@ -56,7 +56,7 @@ impl Dictionary {
                 w.len()
             });
         } else {
-            log::warn!("Словарь {lang} не найден (искал {path})");
+            log::warn!("Словарь {lang} не найден (искал dicts/{fname})");
         }
     }
 

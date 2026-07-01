@@ -7,6 +7,7 @@ mod space_fixer;
 
 use crate::config::TextFixConfig;
 pub use dictionary::Dictionary;
+pub use hallucinations::load_custom_phrases;
 
 pub fn fix_text(text: &str, config: &TextFixConfig, dict: &Dictionary) -> String {
     let mut text = text.to_string();
