@@ -10,6 +10,10 @@ mod ui;
 mod vad;
 
 use config::Config;
+use std::sync::atomic::AtomicIsize;
+
+#[cfg(target_os = "windows")]
+pub static CONSOLE_HWND: AtomicIsize = AtomicIsize::new(0);
 
 fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
@@ -22,6 +26,7 @@ fn main() {
     }
 
     set_dpi_awareness();
+    hide_console();
 
     let config = Config::load();
     log::info!("VoxMiM v{}", env!("CARGO_PKG_VERSION"));
@@ -63,3 +68,21 @@ fn set_dpi_awareness() {
 
 #[cfg(not(target_os = "windows"))]
 fn set_dpi_awareness() {}
+
+#[cfg(target_os = "windows")]
+fn hide_console() {
+    unsafe extern "system" {
+        fn GetConsoleWindow() -> isize;
+        fn ShowWindow(hWnd: isize, nCmdShow: i32) -> i32;
+    }
+    unsafe {
+        let hwnd = GetConsoleWindow();
+        if hwnd != 0 {
+            CONSOLE_HWND.store(hwnd, std::sync::atomic::Ordering::SeqCst);
+            ShowWindow(hwnd, 0); // SW_HIDE = 0
+        }
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn hide_console() {}

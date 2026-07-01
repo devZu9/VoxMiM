@@ -10,6 +10,7 @@ const WM_DESTROY: u32 = 0x0002;
 const WM_NULL: u32 = 0x0000;
 
 const CMD_SETTINGS: u32 = 1000;
+const CMD_CONSOLE: u32 = 1004;
 const CMD_VAD: u32 = 1001;
 const CMD_MATH: u32 = 1002;
 const CMD_QUIT: u32 = 1003;
@@ -197,6 +198,22 @@ unsafe extern "system" fn wnd_proc(
             if let Some(ref tx) = *TRAY_TX.lock().unwrap() {
                 match id {
                     CMD_SETTINGS => { let _ = tx.send(AppCommand::OpenSettings); }
+                    CMD_CONSOLE => {
+                        let hwnd = crate::CONSOLE_HWND.load(std::sync::atomic::Ordering::SeqCst);
+                        if hwnd != 0 {
+                            unsafe {
+                                unsafe extern "system" {
+                                    fn IsWindowVisible(hWnd: isize) -> i32;
+                                    fn ShowWindow(hWnd: isize, nCmdShow: i32) -> i32;
+                                }
+                                if IsWindowVisible(hwnd) != 0 {
+                                    ShowWindow(hwnd, 0); // SW_HIDE
+                                } else {
+                                    ShowWindow(hwnd, 5); // SW_SHOW
+                                }
+                            }
+                        }
+                    }
                     CMD_VAD => { let _ = tx.send(AppCommand::ToggleVad(true)); }
                     CMD_MATH => { let _ = tx.send(AppCommand::ToggleMathMode(true)); }
                     CMD_QUIT => { let _ = tx.send(AppCommand::Quit); }
@@ -226,6 +243,11 @@ unsafe fn show_menu(hwnd: *mut std::ffi::c_void) {
 
     let set_w: Vec<u16> = "Настройки\0".encode_utf16().collect();
     unsafe { AppendMenuW(menu, MF_STRING, CMD_SETTINGS as usize, set_w.as_ptr()); }
+
+    unsafe { AppendMenuW(menu, MF_SEPARATOR, 0, std::ptr::null()); }
+
+    let con_w: Vec<u16> = "Показать окно\0".encode_utf16().collect();
+    unsafe { AppendMenuW(menu, MF_STRING, CMD_CONSOLE as usize, con_w.as_ptr()); }
 
     unsafe { AppendMenuW(menu, MF_SEPARATOR, 0, std::ptr::null()); }
 
