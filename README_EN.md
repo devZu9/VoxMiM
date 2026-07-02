@@ -12,7 +12,7 @@
 - **Wake Word (optional):** "listen", "bro record" — voice activation without button
 - **Recognition:** Whisper large-v3 via CUDA 12.4 (NVIDIA GPU)
 - **Word merging:** dictionary 200K+ Russian words + heuristics + SymSpell
-- **Voice commands:** 199 commands from VoxBee (paste, hotkey, mouse, scroll, grid)
+- **Voice commands:** 199 commands (paste, hotkey, mouse, scroll, grid)
 - **Math mode:** "two plus three" → `2 + 3`
 - **Smart Spacing:** auto-space before insertion
 - **Clipboard:** preserved and restored after paste
@@ -46,7 +46,7 @@ Press **Ctrl+Insert** → speak → release → text appears in active window.
 
 ### Configuration
 
-First run creates `%APPDATA%\voxmim\VoxMiM\config\config.json` with default settings. If VoxBee config exists — it's migrated automatically.
+First run creates `config.json` next to the `.exe`.
 
 Main fields:
 
@@ -103,10 +103,6 @@ VoxMiM uses:
 | Russian words | [danakt/russian-words](https://github.com/danakt/russian-words) |
 | whisper.cpp releases (binary) | [github.com/ggml-org/whisper.cpp/releases](https://github.com/ggml-org/whisper.cpp/releases) |
 | GGML Whisper models | [huggingface.co/ggerganov/whisper.cpp](https://huggingface.co/ggerganov/whisper.cpp/tree/main) |
-
-## Acknowledgments
-
-The idea is inspired by [VoxBee](https://github.com/boris-agent007/Voxbee) — voice typing tool in Python by boris-agent007.
 
 ## License
 
