@@ -7,3 +7,6 @@ config.json
 Thumbs.db
 *.ps1
 *.bat
+opencode.json
+AGENTS.md
+.opencode/
