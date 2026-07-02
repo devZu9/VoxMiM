@@ -12,45 +12,16 @@ const COMMON_PREFIXES: &[&str] = &[
     "контр", "анти", "противо",
 ];
 
-fn ends_with_consonant(word: &str) -> bool {
-    word.chars().last().map_or(false, |c| matches!(c,
-        'б' | 'в' | 'г' | 'д' | 'ж' | 'з' | 'к' | 'л' | 'м' | 'н' |
-        'п' | 'р' | 'с' | 'т' | 'ф' | 'х' | 'ц' | 'ч' | 'ш' | 'щ'
-    ))
-}
-
-fn starts_with_vowel(word: &str) -> bool {
-    word.chars().next().map_or(false, |c| matches!(c,
-        'а' | 'е' | 'ё' | 'и' | 'о' | 'у' | 'ы' | 'э' | 'ю' | 'я'
-    ))
+fn symspell_lookup(word: &str, dict: &Dictionary) -> Option<String> {
+    if dict.contains(word) {
+        return Some(word.to_string());
+    }
+    None
 }
 
 fn is_short_token(word: &str) -> bool {
     let lower = word.to_lowercase();
     word.len() <= 2 && !matches!(lower.as_str(), "и" | "в" | "с" | "у" | "а" | "о" | "к" | "я")
-}
-
-fn symspell_lookup(word: &str, dict: &Dictionary) -> Option<String> {
-    if dict.contains(word) {
-        return Some(word.to_string());
-    }
-
-    let word_lower = word.to_lowercase();
-    // Автоматически генерируем варианты с расстоянием 1
-    // (пропускаем 1 букву, добавляем 1 букву, заменяем 1 букву)
-    let chars: Vec<char> = word_lower.chars().collect();
-    for i in 0..chars.len() {
-        // Пропуск буквы
-        let skipped: String = chars.iter()
-            .enumerate()
-            .filter(|&(j, _)| j != i)
-            .map(|(_, c)| c)
-            .collect();
-        if dict.contains(&skipped) {
-            return Some(skipped);
-        }
-    }
-    None
 }
 
 fn is_valid_word(word: &str, dict: &Dictionary) -> bool {
@@ -94,12 +65,6 @@ pub fn fix_spaces(text: &str, dict: &Dictionary) -> String {
             }
 
             if merge_word.is_none() && (is_short_token(w1) || is_short_token(w2)) {
-                if let Some(found) = symspell_lookup(&merged_lower, dict) {
-                    merge_word = Some(found);
-                }
-            }
-
-            if merge_word.is_none() && ends_with_consonant(w1) && starts_with_vowel(w2) {
                 if let Some(found) = symspell_lookup(&merged_lower, dict) {
                     merge_word = Some(found);
                 }

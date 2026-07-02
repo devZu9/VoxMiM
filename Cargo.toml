@@ -1,6 +1,6 @@
 [package]
 name = "voxmim"
-version = "0.5.0"
+version = "0.5.2"
 edition = "2024"
 description = "Голосовой ввод текста на Rust. На основе идей VoxBee с исправлением разорванных слов."
 license = "MIT"
