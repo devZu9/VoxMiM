@@ -1,8 +1,8 @@
 # VoxMiM
 
-> Проект сделан изначально для собственных нужд для освоения и опыта вайб-кодинга в оболочке [OpenCode](https://opencode.ai/go?ref=DHSKBMGTK0)
-
 [English version](README_EN.md)
+
+> Проект сделан изначально для собственных нужд для освоения и опыта вайб-кодинга в оболочке [OpenCode](https://opencode.ai/go?ref=DHSKBMGTK0)
 
 **Голосовой ввод текста на Rust.** Идея основана на [VoxBee](https://github.com/boris-agent007/Voxbee). Главное отличие — исправление произвольных пробелов внутри распознанных слов.
 
