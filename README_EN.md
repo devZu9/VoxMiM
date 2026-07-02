@@ -1,8 +1,10 @@
 # VoxMiM
 
-**Voice typing on Rust.** Inspired by [VoxBee](https://github.com/boris-agent007/Voxbee). The key improvement — fixing broken/spaced words inside recognized text.
-
 [Русская версия](README.md)
+
+> This project was initially made for personal use to learn and gain experience in vibe-coding using [OpenCode](https://opencode.ai/go?ref=DHSKBMGTK0)
+
+**Voice typing on Rust.** Inspired by [VoxBee](https://github.com/boris-agent007/Voxbee). The key improvement — fixing broken/spaced words inside recognized text.
 
 ## Features
 
