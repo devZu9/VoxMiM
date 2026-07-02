@@ -53,7 +53,7 @@ target\release\voxmim.exe
 ```json
 {
   "mic_name": "Микрофон (USB PnP Audio Device)",
-  "model_path": "C:\\_workPortable\\WhisperCpp\\models\\ggml-large-v3-turbo-q8_0.bin",
+  "model_path": "models\\ggml-large-v3-turbo-q8_0.bin",
   "use_gpu": true,
   "trigger": { "button": "Keyboard", "keyboard": "ctrl+insert" },
   "wake_mode": false,
