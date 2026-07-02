@@ -70,6 +70,14 @@ pub fn fix_spaces(text: &str, dict: &Dictionary) -> String {
         if i + 1 < words.len() {
             let w1 = words[i];
             let w2 = words[i + 1];
+
+            // Не склеиваем предлоги и короткие слова (< 3 символов)
+            if w1.chars().count() < 3 || w2.chars().count() < 3 {
+                result.push(words[i].to_string());
+                i += 1;
+                continue;
+            }
+
             let merged = format!("{w1}{w2}");
             let merged_lower = merged.to_lowercase();
 

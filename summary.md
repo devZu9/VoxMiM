@@ -106,4 +106,5 @@ cargo test               # 21 тест
 - [x] **LICENSE** (MIT)
 - [ ] **macOS/Linux** порт
 - [ ] **Английский язык** — словарь + space fixer
+- [ ] **Настраиваемые уровни эвристик склейки** — `space_fixer_level` в config (0-3)
 - [ ] **CI/CD** (GitHub Actions)
