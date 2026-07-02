@@ -1,4 +1,4 @@
-# VoxMiM v0.5.2 — Итоговая сводка
+# VoxMiM v0.6.0 — Итоговая сводка
 
 ## Что сделано
 
@@ -23,6 +23,7 @@ Ctrl+Insert → запись → отпустить → whisper (GPU) → тек
 | Иконка загрузки | ✅ | hourglass-fill.png мигает до готовности моделей |
 | Команды голосом | ✅ | 199 команд из VoxBee |
 | Буфер обмена | ✅ | Сохраняется и восстанавливается |
+| Пользовательский словарь | ✅ | dicts/user_dict.json + диалог добавления |
 | Smart Spacing | ✅ | AUTO-пробел перед вставкой |
 | Console toggle | ✅ | Показать/скрыть консоль из трея |
 | Иконка .exe | ✅ | vox-mim.ico вшита в бинарник |
@@ -88,7 +89,8 @@ src/
 - **21 unit-тест** — все проходят
 - **v0.5.1:** space_fixer — защита от склейки предлогов короче 3 символов
 - **v0.5.2:** space_fixer — убрана эвристика согласная→гласная, SymSpell только точное совпадение
-- Модули: space_fixer, hallucinations, repetitions, punctuation, math, vad
+- **v0.6.0:** `text/user_dict.rs` — пользовательский словарь + кеш regex + границы через `is_alphabetic`
+- Модули: space_fixer, hallucinations, repetitions, punctuation, math, vad, user_dict
 
 ### Сборка
 
@@ -106,6 +108,7 @@ cargo test               # 21 тест
 - [ ] **Wake word** — код готов, требует `wake_mode: true` + модель
 - [x] **README.md** (EN + RU)
 - [x] **LICENSE** (MIT)
+- [x] **Пользовательский словарь** — v0.6.0
 - [ ] **macOS/Linux** порт
 - [ ] **Английский язык** — словарь + space fixer
 - [ ] **Настраиваемые уровни эвристик склейки** — `space_fixer_level` в config (0-3)

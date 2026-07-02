@@ -92,13 +92,13 @@ fn set_dpi_awareness() {}
 fn hide_console() {
     unsafe extern "system" {
         fn GetConsoleWindow() -> isize;
-        fn ShowWindow(hWnd: isize, nCmdShow: i32) -> i32;
+        fn ShowWindow(hWnd: *mut std::ffi::c_void, nCmdShow: i32) -> i32;
     }
     unsafe {
         let hwnd = GetConsoleWindow();
         if hwnd != 0 {
             CONSOLE_HWND.store(hwnd, std::sync::atomic::Ordering::SeqCst);
-            ShowWindow(hwnd, 0); // SW_HIDE = 0
+            ShowWindow(hwnd as *mut std::ffi::c_void, 0);
         }
     }
 }

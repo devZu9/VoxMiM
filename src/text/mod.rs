@@ -4,12 +4,14 @@ mod hallucinations;
 mod punctuation;
 mod repetitions;
 mod space_fixer;
+pub mod user_dict;
 
 use crate::config::TextFixConfig;
 pub use dictionary::Dictionary;
 pub use hallucinations::load_custom_phrases;
+pub use user_dict::UserDict;
 
-pub fn fix_text(text: &str, config: &TextFixConfig, dict: &Dictionary) -> String {
+pub fn fix_text(text: &str, config: &TextFixConfig, dict: &Dictionary, user_dict: &UserDict) -> String {
     let mut text = text.to_string();
 
     if config.fix_hallucinations {
@@ -23,8 +25,12 @@ pub fn fix_text(text: &str, config: &TextFixConfig, dict: &Dictionary) -> String
     }
 
     if config.fix_dictionary {
+        log::debug!("fix_text: fix_dictionary=true, текст до: «{text}»");
         text = dictionary::apply_dict(&text);
-        // apply_user_dict — пока заглушка
+        text = user_dict.apply(&text);
+        log::debug!("fix_text: после словарей: «{text}»");
+    } else {
+        log::debug!("fix_text: fix_dictionary=false — словари отключены");
     }
 
     if config.fix_repetitions {

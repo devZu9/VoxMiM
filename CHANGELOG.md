@@ -5,6 +5,14 @@ All notable changes to VoxMiM will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] — 2026-07-02
+
+### Added
+- **Пользовательский словарь:** новый модуль `text/user_dict.rs` — загрузка пар «как распознано» → «правильный вариант» из `dicts/user_dict.json`
+- **Диалог добавления слов:** Win32-окно «Добавить слово» через трей → иконка, два поля, кнопки «Добавить»/«Отмена»
+- **Пункты меню в трее:** «Добавить слово...» и «Редактировать словарь» (открывает JSON в блокноте)
+- **Кеш regex'ов**: предварительная компиляция + ручная проверка Unicode-границ (`is_alphabetic`) вместо неподдерживаемого lookaround
+
 ## [0.5.2] — 2026-07-02
 
 ### Fixed

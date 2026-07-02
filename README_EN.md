@@ -14,6 +14,7 @@
 - **Word merging:** dictionary 200K+ Russian words + heuristics + SymSpell
 - **Voice commands:** 199 commands (paste, hotkey, mouse, scroll, grid)
 - **Math mode:** "two plus three" → `2 + 3`
+- **User dictionary:** custom phrase replacements via tray dialog or JSON
 - **Smart Spacing:** auto-space before insertion
 - **Clipboard:** preserved and restored after paste
 

@@ -6,6 +6,7 @@ use crate::input::hotkeys::HotkeyListener;
 use crate::input::inserter::TextInserter;
 use crate::stt::engine::WhisperEngine;
 use crate::text::fix_text;
+use crate::text::user_dict::UserDict;
 use crate::text::Dictionary;
 use crate::ui::tray::TrayManager;
 use crossbeam_channel::{Receiver, Sender};
@@ -26,6 +27,8 @@ pub enum AppCommand {
     ReloadCommands,
     ToggleMathMode(bool),
     RecordingResult(String),
+    AddUserEntry { wrong: String, correct: String },
+    EditUserDict,
     Quit,
 }
 
@@ -45,6 +48,7 @@ pub struct App {
     state: AppState,
     config: Config,
     dict: Dictionary,
+    user_dict: UserDict,
     inserter: TextInserter,
     executor: CommandExecutor,
     _hotkey: Option<HotkeyListener>,
@@ -282,6 +286,12 @@ impl App {
         let dict = Dictionary::new();
         dict.load_lang(&config.language);
 
+        // Пользовательский словарь
+        let user_dict = UserDict::new();
+        if let Some(ref path) = config.user_dict_path {
+            user_dict.load(path);
+        }
+
         // Кастомные фразы галлюцинаций
         let h_path = crate::config::dicts_path().join("hallucinations.txt");
         crate::text::load_custom_phrases(&h_path);
@@ -290,6 +300,7 @@ impl App {
             state: AppState::Idle,
             config,
             dict,
+            user_dict,
             inserter: TextInserter::new(),
             executor,
             _hotkey: Some(hotkey),
@@ -320,6 +331,12 @@ impl App {
             AppCommand::StopRecording => { self.on_stop(); true }
             AppCommand::RecordingResult(text) => { self.on_result(&text); true }
             AppCommand::OpenSettings => { self.on_open_settings(); true }
+            AppCommand::AddUserEntry { wrong, correct } => {
+                self.user_dict.add_entry(&wrong, &correct);
+                log::info!("Добавлено в словарь: «{wrong}» → «{correct}»");
+                true
+            }
+            AppCommand::EditUserDict => { self.on_edit_user_dict(); true }
             AppCommand::Quit => {
                 crate::ui::tray::request_exit();
                 false
@@ -340,6 +357,24 @@ impl App {
                 title.as_ptr(),
                 0,
             );
+        }
+    }
+
+    fn on_edit_user_dict(&self) {
+        let path = self.user_dict.path();
+        if path.as_os_str().is_empty() {
+            log::warn!("Путь пользовательского словаря не задан");
+            return;
+        }
+        if !path.exists() {
+            if let Err(e) = std::fs::write(&path, "{}") {
+                log::error!("Не удалось создать user_dict.json: {e}");
+                return;
+            }
+        }
+        match std::process::Command::new("notepad.exe").arg(&path).spawn() {
+            Ok(_) => log::info!("Открыт user_dict.json в блокноте"),
+            Err(e) => log::error!("Не удалось открыть блокнот: {e}"),
         }
     }
 
@@ -377,7 +412,7 @@ impl App {
             return;
         }
 
-        let fixed = fix_text(text, &self.config.text_fix, &self.dict);
+        let fixed = fix_text(text, &self.config.text_fix, &self.dict, &self.user_dict);
         log::info!("📝 {fixed}");
 
         if let Some(action) = self.executor.try_execute(&fixed, self.config.command_max_words) {

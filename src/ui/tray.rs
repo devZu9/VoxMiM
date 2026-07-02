@@ -19,6 +19,8 @@ const CMD_CONSOLE: u32 = 1004;
 const CMD_VAD: u32 = 1001;
 const CMD_MATH: u32 = 1002;
 const CMD_QUIT: u32 = 1003;
+const CMD_ADD_WORD: u32 = 1005;
+const CMD_EDIT_DICT: u32 = 1006;
 
 unsafe extern "system" {
     fn RegisterClassW(wc: *const WNDCLASSW) -> u16;
@@ -139,6 +141,10 @@ static TRAY_BLINK_TOGGLE: AtomicBool = AtomicBool::new(false);
 static TRAY_HAS_READY: AtomicBool = AtomicBool::new(false);
 
 pub struct TrayManager;
+
+pub fn tray_cmd_tx() -> std::sync::MutexGuard<'static, Option<Sender<AppCommand>>> {
+    TRAY_TX.lock().unwrap()
+}
 
 pub fn request_exit() {
     let hwnd = TRAY_HWND.load(Ordering::SeqCst) as *mut std::ffi::c_void;
@@ -291,13 +297,14 @@ unsafe extern "system" fn wnd_proc(
                 match id {
                     CMD_SETTINGS => { let _ = tx.send(AppCommand::OpenSettings); }
                     CMD_CONSOLE => {
-                        let hwnd = crate::CONSOLE_HWND.load(std::sync::atomic::Ordering::SeqCst);
-                        if hwnd != 0 {
+                        let raw = crate::CONSOLE_HWND.load(std::sync::atomic::Ordering::SeqCst);
+                        if raw != 0 {
                             unsafe {
                                 unsafe extern "system" {
-                                    fn IsWindowVisible(hWnd: isize) -> i32;
-                                    fn ShowWindow(hWnd: isize, nCmdShow: i32) -> i32;
+                                    fn IsWindowVisible(hWnd: *mut std::ffi::c_void) -> i32;
+                                    fn ShowWindow(hWnd: *mut std::ffi::c_void, nCmdShow: i32) -> i32;
                                 }
+                                let hwnd = raw as *mut std::ffi::c_void;
                                 if IsWindowVisible(hwnd) != 0 {
                                     ShowWindow(hwnd, 0); // SW_HIDE
                                 } else {
@@ -308,6 +315,12 @@ unsafe extern "system" fn wnd_proc(
                     }
                     CMD_VAD => { let _ = tx.send(AppCommand::ToggleVad(true)); }
                     CMD_MATH => { let _ = tx.send(AppCommand::ToggleMathMode(true)); }
+                    CMD_ADD_WORD => {
+                        let hwnd_parent = TRAY_HWND.load(Ordering::SeqCst) as *mut std::ffi::c_void;
+                        let instance = unsafe { GetModuleHandleW(std::ptr::null()) };
+                        crate::ui::dialog::show_add_word_dialog(hwnd_parent, instance);
+                    }
+                    CMD_EDIT_DICT => { let _ = tx.send(AppCommand::EditUserDict); }
                     CMD_QUIT => { let _ = tx.send(AppCommand::Quit); }
                     _ => {}
                 }
@@ -343,14 +356,22 @@ unsafe fn show_menu(hwnd: *mut std::ffi::c_void) {
 
     let con_visible = unsafe {
         unsafe extern "system" {
-            fn IsWindowVisible(hWnd: isize) -> i32;
+            fn IsWindowVisible(hWnd: *mut std::ffi::c_void) -> i32;
         }
-        let hwnd = crate::CONSOLE_HWND.load(std::sync::atomic::Ordering::SeqCst);
-        hwnd != 0 && IsWindowVisible(hwnd) != 0
+        let raw = crate::CONSOLE_HWND.load(std::sync::atomic::Ordering::SeqCst);
+        raw != 0 && IsWindowVisible(raw as *mut std::ffi::c_void) != 0
     };
     let con_label = if con_visible { "Скрыть окно" } else { "Показать окно" };
     let con_w: Vec<u16> = format!("{con_label}\0").encode_utf16().collect();
     unsafe { AppendMenuW(menu, MF_STRING, CMD_CONSOLE as usize, con_w.as_ptr()); }
+
+    unsafe { AppendMenuW(menu, MF_SEPARATOR, 0, std::ptr::null()); }
+
+    let add_w: Vec<u16> = "Добавить слово...\0".encode_utf16().collect();
+    unsafe { AppendMenuW(menu, MF_STRING, CMD_ADD_WORD as usize, add_w.as_ptr()); }
+
+    let edit_w: Vec<u16> = "Редактировать словарь\0".encode_utf16().collect();
+    unsafe { AppendMenuW(menu, MF_STRING, CMD_EDIT_DICT as usize, edit_w.as_ptr()); }
 
     unsafe { AppendMenuW(menu, MF_SEPARATOR, 0, std::ptr::null()); }
 
@@ -376,7 +397,7 @@ unsafe fn show_menu(hwnd: *mut std::ffi::c_void) {
     }
 }
 
-fn icon_from_bytes(data: &[u8]) -> *mut std::ffi::c_void {
+pub(crate) fn icon_from_bytes(data: &[u8]) -> *mut std::ffi::c_void {
     if let Ok(img) = image::load_from_memory(data) {
         let rgba = img.to_rgba8();
         let (w, h) = rgba.dimensions();
