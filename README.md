@@ -1,6 +1,10 @@
 # VoxMiM
 
-**Голосовой ввод текста на Rust.** Порт [VoxBee](https://github.com/boris-agent007/Voxbee) с исправлением ключевой ошибки: произвольные пробелы внутри распознанных слов.
+> Проект сделан изначально для собственных нужд для освоения и опыта вайб-кодинга в оболочке [OpenCode](https://opencode.ai/go?ref=DHSKBMGTK0)
+
+[English version](README_EN.md)
+
+**Голосовой ввод текста на Rust.** Идея основана на [VoxBee](https://github.com/boris-agent007/Voxbee). Главное отличие — исправление произвольных пробелов внутри распознанных слов.
 
 ## Возможности
 
@@ -100,6 +104,10 @@ VoxMiM использует:
 | whisper.cpp релизы (бинарник) | [github.com/ggml-org/whisper.cpp/releases](https://github.com/ggml-org/whisper.cpp/releases) |
 | GGML-модели Whisper | [huggingface.co/ggerganov/whisper.cpp](https://huggingface.co/ggerganov/whisper.cpp/tree/main) |
 
+## Благодарности
+
+Идея проекта вдохновлена [VoxBee](https://github.com/boris-agent007/Voxbee) — голосовым вводом текста на Python от boris-agent007.
+
 ## Лицензия
 
-GNU General Public License v3.0
+MIT License

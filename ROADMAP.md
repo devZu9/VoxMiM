@@ -115,8 +115,8 @@
 - [x] `Cargo.toml` profile overrides (release → LTO, optimize)
 - [x] Авто-скачивание whisper-cli (download.rs)
 - [x] Console toggle (показать/скрыть из трея)
-- [ ] `README.md` (EN + RU)
-- [ ] `LICENSE` (GPL-3.0)
+- [x] `README.md`
+- [x] `LICENSE` (MIT)
 - [ ] Интеграционное тестирование (end-to-end)
 - [ ] Обработка ошибок во всех модулях
 - [ ] Оптимизация: ленивая загрузка, кэширование

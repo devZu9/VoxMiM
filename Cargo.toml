@@ -2,8 +2,8 @@
 name = "voxmim"
 version = "0.5.0"
 edition = "2024"
-description = "Голосовой ввод текста на Rust. Порт VoxBee с исправлением разорванных слов."
-license = "GPL-3.0"
+description = "Голосовой ввод текста на Rust. На основе идей VoxBee с исправлением разорванных слов."
+license = "MIT"
 authors = ["DevZu"]
 
 [features]

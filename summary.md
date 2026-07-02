@@ -102,8 +102,8 @@ cargo test               # 21 тест
 - [ ] **Окно настроек** (egui) — заглушка через MessageBox
 - [ ] **VAD-режим** — детектор написан, не подключён к пайплайну
 - [ ] **Wake word** — код готов, требует `wake_mode: true` + модель
-- [ ] **README.md** (EN + RU)
-- [ ] **LICENSE** (GPL-3.0)
+- [x] **README.md** (EN + RU)
+- [x] **LICENSE** (MIT)
 - [ ] **macOS/Linux** порт
 - [ ] **Английский язык** — словарь + space fixer
 - [ ] **CI/CD** (GitHub Actions)

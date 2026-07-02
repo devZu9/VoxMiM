@@ -1,7 +1,7 @@
 # VoxMiM — Техническое задание
 
 > **VoxMiM** (Vox — голос, MiM — Mouse Input Mic) — голосовой ввод текста и управление компьютером на Rust.
-> Полноценный порт [VoxBee](https://github.com/boris-agent007/Voxbee) с исправлением ключевой ошибки: произвольные пробелы внутри распознанных слов.
+> На основе идей [VoxBee](https://github.com/boris-agent007/Voxbee). Главное исправление — произвольные пробелы внутри распознанных слов.
 
 ---
 
@@ -473,6 +473,6 @@ print(r.json()["text"])
 | whisper.cpp релизы | [github.com/ggml-org/whisper.cpp/releases](https://github.com/ggml-org/whisper.cpp/releases) | Бинарник whisper-cli.exe (cu-bin-blas12.4) |
 | GGML-модели Whisper | [huggingface.co/ggerganov/whisper.cpp](https://huggingface.co/ggerganov/whisper.cpp/tree/main) | GGML-файлы моделей (large-v3, small, tiny) |
 
-## 13. Лицензия
+## 14. Лицензия
 
-GNU General Public License v3.0 (как и оригинальный VoxBee).
+MIT License
