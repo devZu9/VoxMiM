@@ -85,7 +85,7 @@ unsafe extern "system" fn dlg_wnd_proc(
             let left = 40i32;
             let label_w = 300i32;
 
-            let lbl1: Vec<u16> = "Как распознано:\0".encode_utf16().collect();
+            let lbl1 = crate::lang::t_utf16("dialog.add_word.label_wrong");
             CreateWindowExW(0, WC_STATIC.as_ptr(), lbl1.as_ptr(),
                 0x50000000, left, 20, label_w, 20, hwnd, std::ptr::null_mut(), instance, std::ptr::null_mut());
 
@@ -94,7 +94,7 @@ unsafe extern "system" fn dlg_wnd_proc(
                 IDC_EDIT_WRONG as *mut std::ffi::c_void, instance, std::ptr::null_mut());
             SetFocus(edit_wrong);
 
-            let lbl2: Vec<u16> = "Правильный вариант:\0".encode_utf16().collect();
+            let lbl2 = crate::lang::t_utf16("dialog.add_word.label_correct");
             CreateWindowExW(0, WC_STATIC.as_ptr(), lbl2.as_ptr(),
                 0x50000000, left, 92, label_w, 20, hwnd, std::ptr::null_mut(), instance, std::ptr::null_mut());
 
@@ -102,12 +102,12 @@ unsafe extern "system" fn dlg_wnd_proc(
                 0x50010080, left, 116, edit_w, edit_h, hwnd,
                 IDC_EDIT_CORRECT as *mut std::ffi::c_void, instance, std::ptr::null_mut());
 
-            let add: Vec<u16> = "Добавить\0".encode_utf16().collect();
+            let add = crate::lang::t_utf16("dialog.add_word.add");
             CreateWindowExW(0, WC_BUTTON.as_ptr(), add.as_ptr(),
                 0x50010000, left, 170, 100, 30, hwnd,
                 IDC_BTN_ADD as *mut std::ffi::c_void, instance, std::ptr::null_mut());
 
-            let cancel: Vec<u16> = "Отмена\0".encode_utf16().collect();
+            let cancel = crate::lang::t_utf16("dialog.add_word.cancel");
             CreateWindowExW(0, WC_BUTTON.as_ptr(), cancel.as_ptr(),
                 0x50010000, left + 110, 170, 100, 30, hwnd,
                 IDC_BTN_CANCEL as *mut std::ffi::c_void, instance, std::ptr::null_mut());
@@ -185,7 +185,7 @@ pub fn show_add_word_dialog(parent_hwnd: *mut std::ffi::c_void, instance: *mut s
         let x = (sw - w) / 2;
         let y = (sh - h) / 2;
 
-        let title: Vec<u16> = "Добавить пользовательское слово\0".encode_utf16().collect();
+        let title = crate::lang::t_utf16("dialog.add_word.title");
 
         let hwnd = CreateWindowExW(
             0, class_name.as_ptr(), title.as_ptr(),

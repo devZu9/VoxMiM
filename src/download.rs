@@ -15,6 +15,7 @@ static VARIANTS: &[Variant] = &[
         zip_pattern: "whisper-cublas-12.4.0-bin-x64.zip",
         needed_files: &[
             "whisper-cli.exe",
+            "whisper.dll",
             "ggml-cuda.dll",
             "cublas64_12.dll",
             "cublasLt64_12.dll",
@@ -29,6 +30,7 @@ static VARIANTS: &[Variant] = &[
         zip_pattern: "whisper-cublas-11.8.0-bin-x64.zip",
         needed_files: &[
             "whisper-cli.exe",
+            "whisper.dll",
             "ggml-cuda.dll",
             "cublas64_11.dll",
             "cublasLt64_11.dll",

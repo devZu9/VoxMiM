@@ -66,7 +66,15 @@ impl AudioCapture {
     /// Запуск захвата — шлёт чанки аудио в mpsc-канал.
     /// `preferred` — если Some, пробует эту частоту первой (из сохранённой настройки).
     /// Возвращает частоту, на которой удалось запустить захват.
+    #[allow(dead_code)]
     pub fn start_capture(&mut self, tx: mpsc::Sender<Vec<f32>>, preferred: Option<u32>) -> Result<u32, String> {
+        let txs = vec![tx];
+        self.start_capture_multi(txs, preferred)
+    }
+
+    /// Запуск захвата с раздачей аудио в несколько каналов (fan-out).
+    /// Все получатели получают одни и те же чанки.
+    pub fn start_capture_multi(&mut self, txs: Vec<mpsc::Sender<Vec<f32>>>, preferred: Option<u32>) -> Result<u32, String> {
         let device = self.device.as_ref().ok_or("Устройство не выбрано")?;
 
         let default_cfg = device
@@ -99,11 +107,14 @@ impl AudioCapture {
             };
 
             let err_fn = |err| log::error!("Ошибка потока: {err}");
-            let tx = tx.clone();
+            let txs = txs.clone();
             match device.build_input_stream(
                 &cfg,
                 move |data: &[f32], _: &InputCallbackInfo| {
-                    let _ = tx.send(data.to_vec());
+                    let v = data.to_vec();
+                    for tx in &txs {
+                        let _ = tx.send(v.clone());
+                    }
                 },
                 err_fn,
                 None,

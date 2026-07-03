@@ -12,12 +12,16 @@ fn dicts_dir() -> PathBuf {
     exe_dir().join("dicts")
 }
 
-fn models_dir() -> PathBuf {
+pub fn models_dir() -> PathBuf {
     exe_dir().join("models")
 }
 
 fn bins_dir() -> PathBuf {
     exe_dir().join("bins")
+}
+
+pub fn logs_dir() -> PathBuf {
+    exe_dir().join("logs")
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -53,7 +57,19 @@ pub struct Config {
     pub commands_path: Option<PathBuf>,
     pub aliases_path: Option<PathBuf>,
     pub user_dict_path: Option<PathBuf>,
+    #[serde(default)]
+    pub dark_mode: bool,
+    #[serde(default = "default_engine_mode")]
+    pub engine_mode: String,
+    #[serde(default = "default_engine_mode")]
+    pub detector_mode: String,
+    #[serde(default, skip_serializing)]
+    pub keep_model_loaded: Option<bool>,
+    #[serde(default, skip_serializing)]
+    pub keep_detector_loaded: Option<bool>,
 }
+
+fn default_engine_mode() -> String { "server".to_string() }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TriggerConfig {
@@ -79,11 +95,12 @@ pub struct VadConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TextFixConfig {
-    pub fix_spaces: bool,
     pub fix_hallucinations: bool,
-    pub fix_dictionary: bool,
+    pub fix_user_dict: bool,
     pub fix_repetitions: bool,
     pub fix_punctuation: bool,
+    #[serde(default)]
+    pub trailing_space: bool,
 }
 
 impl Default for Config {
@@ -122,11 +139,11 @@ impl Default for Config {
                 accept_short_speech: true,
             },
             text_fix: TextFixConfig {
-                fix_spaces: true,
                 fix_hallucinations: true,
-                fix_dictionary: true,
+                fix_user_dict: true,
                 fix_repetitions: true,
                 fix_punctuation: true,
+                trailing_space: false,
             },
             noise_filter_enabled: true,
             math_mode: false,
@@ -157,6 +174,11 @@ impl Default for Config {
             commands_path: Some(dicts.join("commands.json")),
             aliases_path: Some(dicts.join("aliases.json")),
             user_dict_path: Some(dicts.join("user_dict.json")),
+            engine_mode: "one-shot".to_string(),
+            detector_mode: "one-shot".to_string(),
+            dark_mode: false,
+            keep_model_loaded: None,
+            keep_detector_loaded: None,
         }
     }
 }
@@ -201,6 +223,19 @@ impl Config {
             if let Some(found) = detector_fallbacks.iter().find(|p| std::path::Path::new(p).exists()) {
                 log::info!("Детектор: {found}");
                 cfg.detector_model = std::path::PathBuf::from(found);
+            }
+        }
+
+        // Миграция со старых полей keep_model_loaded на engine_mode
+        if cfg.keep_model_loaded.unwrap_or(false) {
+            if cfg.engine_mode == "one-shot" {
+                cfg.engine_mode = "server".to_string();
+                log::info!("Миграция: keep_model_loaded=true → engine_mode=server");
+            }
+        }
+        if cfg.keep_detector_loaded.unwrap_or(false) {
+            if cfg.detector_mode == "one-shot" {
+                cfg.detector_mode = "server".to_string();
             }
         }
 
@@ -320,9 +355,8 @@ impl Config {
         }
 
         if let Some(cmds) = v.get("text_fix_enabled").and_then(|v| v.as_bool()) {
-            self.text_fix.fix_spaces = cmds;
             self.text_fix.fix_hallucinations = cmds;
-            self.text_fix.fix_dictionary = cmds;
+            self.text_fix.fix_user_dict = cmds;
             self.text_fix.fix_punctuation = cmds;
             self.text_fix.fix_repetitions = cmds;
         }

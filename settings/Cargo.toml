@@ -1,0 +1,12 @@
+[package]
+name = "voxmim-settings"
+version = "0.7.2"
+edition = "2024"
+
+[dependencies]
+fenestra = "0.39"
+fenestra-kit = "0.39"
+serde_json = "1"
+
+[build-dependencies]
+embed-resource = "3.0"

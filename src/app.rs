@@ -1,13 +1,15 @@
 use crate::audio::capture::AudioCapture;
+use crate::audio::processor::AudioProcessor;
 use crate::commands::executor::{CommandAction, CommandExecutor};
 use crate::config::Config;
+use crate::dlog;
 use crate::download;
 use crate::input::hotkeys::HotkeyListener;
 use crate::input::inserter::TextInserter;
+use crate::lang;
 use crate::stt::engine::WhisperEngine;
 use crate::text::fix_text;
 use crate::text::user_dict::UserDict;
-use crate::text::Dictionary;
 use crate::ui::tray::TrayManager;
 use crossbeam_channel::{Receiver, Sender};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -21,14 +23,16 @@ pub enum AppCommand {
     ChangeMic { name: String, index: usize },
     ChangeModel(String),
     ToggleGpu(bool),
-    ToggleVad(bool),
+    ToggleVad,
+    ToggleWake,
     OpenSettings,
     ReloadDictionary,
     ReloadCommands,
-    ToggleMathMode(bool),
+    ToggleMathMode,
     RecordingResult(String),
     AddUserEntry { wrong: String, correct: String },
     EditUserDict,
+    ApplyConfig(Box<Config>),
     Quit,
 }
 
@@ -47,7 +51,6 @@ fn chunk_energy(samples: &[f32]) -> f32 {
 pub struct App {
     state: AppState,
     config: Config,
-    dict: Dictionary,
     user_dict: UserDict,
     inserter: TextInserter,
     executor: CommandExecutor,
@@ -55,15 +58,20 @@ pub struct App {
     _audio: Option<AudioCapture>,
     recording: Arc<AtomicBool>,
     audio_buf: Arc<Mutex<Vec<f32>>>,
+    vad_enabled: Arc<AtomicBool>,
     whisper_tx: Sender<Vec<f32>>,
     cmd_tx: Sender<AppCommand>,
     cmd_rx: Receiver<AppCommand>,
+    settings_process: Option<std::process::Child>,
 }
 
 impl App {
     pub fn new(mut config: Config) -> Self {
         let (cmd_tx, cmd_rx) = crossbeam_channel::unbounded();
         let (whisper_tx, whisper_rx) = crossbeam_channel::unbounded::<Vec<f32>>();
+
+        // Локализация — до трея, чтобы меню читало правильные строки
+        lang::load_locale(&config.language);
 
         // Трей — запускаем сразу с иконкой загрузки
         let recording = Arc::new(AtomicBool::new(false));
@@ -81,6 +89,9 @@ impl App {
                 .ok();
         }
 
+        // Настройки — persistent EventLoop (всегда живёт, окно показывается по сигналу)
+        crate::ui::settings::init(config.clone(), cmd_tx.clone());
+
         let mut executor = CommandExecutor::new();
         if let Some(ref path) = config.commands_path {
             executor.load_commands(path);
@@ -89,7 +100,7 @@ impl App {
             executor.load_aliases(path);
         }
 
-        // Whisper — общий доступ через Arc<Mutex>
+        // Whisper — два независимых движка (транскрайбер + детектор)
         let bins_path = match download::ensure_whisper_bins(config.whisper_bins_path.as_deref()) {
             Ok(p) => {
                 if config.whisper_bins_path.as_deref() != Some(&p) {
@@ -103,30 +114,48 @@ impl App {
                 String::new()
             }
         };
-        let whisper = Arc::new(Mutex::new(WhisperEngine::new(&bins_path)));
-        {
-            let mut w = whisper.lock().unwrap();
-            w.set_language(&config.language);
-            w.set_n_threads(if config.threads > 0 { config.threads } else { 4 });
 
-            if config.model_path.exists() {
-                if let Err(e) = w.load_transcriber(&config.model_path, config.use_gpu) {
-                    log::error!("{e}");
-                }
-            } else {
-                log::warn!("Модель не найдена: {}", config.model_path.display());
+        let mut trans = WhisperEngine::new(&bins_path);
+        trans.set_language(&config.language);
+        trans.set_mode(crate::stt::engine::EngineMode::from_str(&config.engine_mode));
+        if config.model_path.exists() {
+            if let Err(e) = trans.load_model(&config.model_path) {
+                log::error!("Транскрайбер: {e}");
             }
+        } else {
+            log::warn!("Модель не найдена: {}", config.model_path.display());
+        }
+        if config.engine_mode == "server" && trans.is_loaded() && config.warmup_on_start {
+            trans.warmup();
+        }
+        let transcriber = Arc::new(Mutex::new(trans));
 
-            if config.wake_mode && config.detector_model.exists() {
-                if let Err(e) = w.load_detector(&config.detector_model) {
-                    log::error!("Детектор: {e}");
-                }
+        let mut det = WhisperEngine::new(&bins_path);
+        det.set_language(&config.language);
+        det.set_mode(crate::stt::engine::EngineMode::from_str(&config.detector_mode));
+        if config.detector_model.exists() {
+            if let Err(e) = det.load_model(&config.detector_model) {
+                log::error!("Детектор: {e}");
             }
-
-            if w.is_loaded() && config.warmup_on_start {
-                w.warmup();
+            if let Ok(meta) = std::fs::metadata(&config.detector_model) {
+                if meta.len() > 500_000_000 {
+                    log::warn!("Модель детектора ({}) > 500 МБ. Используйте ggml-small-q8_0.bin для скорости", config.detector_model.display());
+                }
             }
         }
+        if config.detector_mode == "server" && det.is_loaded() && config.warmup_on_start {
+            // Детектор греется через one-shot (не стартует сервер)
+            let dummy = vec![0.0f32; 16000];
+            match det.detect(&dummy) {
+                Ok(t) => dlog!("Прогрев детектора OK: {t:?}"),
+                Err(e) => dlog!("Прогрев детектора: {e}"),
+            }
+        }
+        let detector = Arc::new(Mutex::new(det));
+
+        // Начальное состояние для трея
+        crate::ui::tray::set_vad_state(config.vad.enabled);
+        crate::ui::tray::set_wake_state(config.wake_mode);
 
         ready.store(true, Ordering::SeqCst);
         log::info!("Готов к работе");
@@ -148,7 +177,12 @@ impl App {
         }
 
         let (audio_tx, audio_rx) = mpsc::channel::<Vec<f32>>();
-        let capture_rate = match audio.start_capture(audio_tx, config.capture_sample_rate) {
+        let (wake_tx, wake_rx) = mpsc::channel::<Vec<f32>>();
+        let mut capture_txs = vec![audio_tx];
+        if config.wake_mode {
+            capture_txs.push(wake_tx);
+        }
+        let capture_rate = match audio.start_capture_multi(capture_txs, config.capture_sample_rate) {
             Ok(rate) => {
                 log::info!("Аудио-захват: {rate}Hz");
                 Some(rate)
@@ -160,8 +194,11 @@ impl App {
         };
 
         let sample_rate = audio.sample_rate;
-        if let Ok(mut w) = whisper.lock() {
-            w.set_input_rate(sample_rate);
+        if let Ok(mut t) = transcriber.lock() {
+            t.set_input_rate(sample_rate);
+        }
+        if let Ok(mut d) = detector.lock() {
+            d.set_input_rate(sample_rate);
         }
 
         // Сохраняем частоту захвата, если подобрали новую
@@ -170,27 +207,24 @@ impl App {
             let _ = config.save();
         }
 
-        // Push-to-talk: накопление
+        // Push-to-talk: накопление + VAD (автостоп)
         let audio_buf: Arc<Mutex<Vec<f32>>> = Arc::new(Mutex::new(Vec::new()));
-        let rec_flag = recording.clone();
-        let buf = audio_buf.clone();
-
-        std::thread::Builder::new()
-            .name("audio-accum".into())
-            .spawn(move || {
-                while let Ok(chunk) = audio_rx.recv() {
-                    if rec_flag.load(Ordering::SeqCst) {
-                        if let Ok(mut b) = buf.lock() {
-                            b.extend_from_slice(&chunk);
-                        }
-                    }
-                }
-            })
-            .ok();
+        let vad_enabled = Arc::new(AtomicBool::new(config.vad.enabled));
+        AudioProcessor::spawn(
+            audio_rx,
+            cmd_tx.clone(),
+            whisper_tx.clone(),
+            recording.clone(),
+            audio_buf.clone(),
+            vad_enabled.clone(),
+            sample_rate,
+            config.vad.aggressiveness,
+            config.vad.silence_duration_secs,
+        );
 
         // Whisper worker: транскрибация PTT
         let cmd_tx_w = cmd_tx.clone();
-        let whisper_w = whisper.clone();
+        let ts = transcriber.clone();
         std::thread::Builder::new()
             .name("whisper".into())
             .spawn(move || {
@@ -199,7 +233,7 @@ impl App {
                         log::warn!("Короткое аудио ({} сэмплов)", samples.len());
                         continue;
                     }
-                    let text = match whisper_w.lock().unwrap().transcribe(&samples) {
+                    let text = match ts.lock().unwrap().transcribe(&samples) {
                         Ok(t) => t,
                         Err(e) => {
                             log::error!("Whisper: {e}");
@@ -212,81 +246,62 @@ impl App {
             .ok();
 
         // Wake word детекция (опционально)
-        if config.wake_mode && {
-            whisper.lock().unwrap().is_detector_loaded()
-        } {
+        if config.wake_mode && detector.lock().unwrap().is_loaded() {
             let cmd_tx_d = cmd_tx.clone();
-            let wake_words = config.wake_words.clone();
-            let wake_words_c = wake_words.clone();
-            let chunk_sz = (sample_rate / 2) as usize;
+            let wake_words_c = config.wake_words.clone();
+            let det = detector.clone();
+            let ts = transcriber.clone();
 
-            let mut detect_audio = AudioCapture::new();
-            if let Some(ref name) = config.mic_name {
-                if let Some(idx) = config.mic_index {
-                    let _ = detect_audio.select_device(name, idx);
-                }
-            } else if let Some((name, idx)) = AudioCapture::list_devices().first() {
-                let _ = detect_audio.select_device(name, *idx);
-            }
+            std::thread::Builder::new()
+                .name("wake".into())
+                .spawn(move || {
+                    let mut ring = Vec::new();
+                    let mut awaiting = false;
+                    let mut cmd_buf: Vec<f32> = Vec::new();
+                    let chunk_sz = sample_rate as usize / 2;
 
-            let (detect_tx, detect_rx) = mpsc::channel::<Vec<f32>>();
-            if detect_audio.start_capture(detect_tx, config.capture_sample_rate).is_ok() {
-                let whisper_d = whisper.clone();
-                let whisper_t = whisper.clone();
+                    while let Ok(chunk) = wake_rx.recv() {
+                        ring.extend_from_slice(&chunk);
+                        if ring.len() < chunk_sz { continue; }
 
-                std::thread::Builder::new()
-                    .name("wake".into())
-                    .spawn(move || {
-                        let mut ring = Vec::new();
-                        let mut awaiting = false;
-                        let mut cmd_buf: Vec<f32> = Vec::new();
+                        let energy = chunk_energy(&ring);
+                        let test: Vec<f32> = ring.drain(..chunk_sz).collect();
 
-                        while let Ok(chunk) = detect_rx.recv() {
-                            ring.extend_from_slice(&chunk);
-                            if ring.len() < chunk_sz { continue; }
-
-                            let energy = chunk_energy(&ring);
-                            let test: Vec<f32> = ring.drain(..chunk_sz).collect();
-
-                            if awaiting {
-                                cmd_buf.extend_from_slice(&test);
-                                if energy < 0.001 {
-                                    let samples = std::mem::take(&mut cmd_buf);
-                                    if samples.len() >= 16000 {
-                                        let text = whisper_t.lock().unwrap()
-                                            .transcribe(&samples).unwrap_or_default();
-                                        let _ = cmd_tx_d.send(AppCommand::RecordingResult(text));
-                                    }
-                                    awaiting = false;
+                        if awaiting {
+                            cmd_buf.extend_from_slice(&test);
+                            if energy < 0.001 {
+                                let samples = std::mem::take(&mut cmd_buf);
+                                if samples.len() >= 16000 {
+                                    let text = ts.lock().unwrap()
+                                        .transcribe(&samples).unwrap_or_default();
+                                    let _ = cmd_tx_d.send(AppCommand::RecordingResult(text));
                                 }
-                                continue;
+                                awaiting = false;
                             }
+                            continue;
+                        }
 
-                            if energy < 0.002 { continue; }
-                            if let Ok(text) = whisper_d.lock().unwrap().detect(&test) {
-                                if wake_words_c.iter().any(|w| text.to_lowercase().contains(w)) {
-                                    log::info!("Wake word: {text}");
-                                    awaiting = true;
-                                    cmd_buf.clear();
-                                    cmd_buf.extend_from_slice(&test);
-                                }
+                        if energy < 0.002 { continue; }
+                        if let Ok(text) = det.lock().unwrap().detect(&test) {
+                            if wake_words_c.iter().any(|w| text.to_lowercase().contains(w)) {
+                                log::info!("Wake word: {text}");
+                                awaiting = true;
+                                cmd_buf.clear();
+                                cmd_buf.extend_from_slice(&test);
                             }
                         }
-                    })
-                    .ok();
+                    }
+                })
+                .ok();
 
-                log::info!("Wake word: {wake_words:?}");
-            }
+            log::info!("Голосовая активация: {:?}", config.wake_words);
         }
 
-        // Хоткей
+        // Хоткей — синхронизируем начальное состояние VAD
+        crate::input::hotkeys::set_vad_enabled(config.vad.enabled);
         let hotkey = HotkeyListener::new(cmd_tx.clone(), config.trigger.button.clone());
 
         // Словарь
-        let dict = Dictionary::new();
-        dict.load_lang(&config.language);
-
-        // Пользовательский словарь
         let user_dict = UserDict::new();
         if let Some(ref path) = config.user_dict_path {
             user_dict.load(path);
@@ -299,7 +314,6 @@ impl App {
         Self {
             state: AppState::Idle,
             config,
-            dict,
             user_dict,
             inserter: TextInserter::new(),
             executor,
@@ -307,17 +321,30 @@ impl App {
             _audio: Some(audio),
             recording,
             audio_buf,
+            vad_enabled,
             whisper_tx,
             cmd_tx,
             cmd_rx,
+            settings_process: None,
         }
     }
 
     pub fn run(mut self) {
         log::info!("VoxMiM запущен");
-        while let Ok(cmd) = self.cmd_rx.recv() {
-            if !self.handle_command(cmd) {
-                break;
+        loop {
+            // Проверяем pipe-сигнал каждые 500ms
+            match self.cmd_rx.recv_timeout(std::time::Duration::from_millis(500)) {
+                Ok(cmd) => {
+                    if !self.handle_command(cmd) {
+                        break;
+                    }
+                }
+                Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
+                    if crate::pipe::check_and_clear() {
+                        self.reload_config();
+                    }
+                }
+                Err(_) => break,
             }
         }
         // Даём трей-потоку время удалить иконку
@@ -331,13 +358,63 @@ impl App {
             AppCommand::StopRecording => { self.on_stop(); true }
             AppCommand::RecordingResult(text) => { self.on_result(&text); true }
             AppCommand::OpenSettings => { self.on_open_settings(); true }
+            AppCommand::ToggleVad => {
+                self.config.vad.enabled = !self.config.vad.enabled;
+                self.vad_enabled.store(self.config.vad.enabled, Ordering::SeqCst);
+                crate::input::hotkeys::set_vad_enabled(self.config.vad.enabled);
+                crate::ui::tray::set_vad_state(self.config.vad.enabled);
+                let _ = self.config.save();
+                log::info!("Автостоп: {}", if self.config.vad.enabled { "вкл" } else { "выкл" });
+                true
+            }
+            AppCommand::ToggleWake => {
+                self.config.wake_mode = !self.config.wake_mode;
+                crate::ui::tray::set_wake_state(self.config.wake_mode);
+                let _ = self.config.save();
+                log::info!("Голосовая активация: {}", if self.config.wake_mode { "вкл" } else { "выкл" });
+                true
+            }
+            AppCommand::ToggleMathMode => {
+                self.config.math_mode = !self.config.math_mode;
+                let _ = self.config.save();
+                log::info!("Math Mode: {}", if self.config.math_mode { "вкл" } else { "выкл" });
+                true
+            }
             AppCommand::AddUserEntry { wrong, correct } => {
                 self.user_dict.add_entry(&wrong, &correct);
                 log::info!("Добавлено в словарь: «{wrong}» → «{correct}»");
                 true
             }
+            AppCommand::ApplyConfig(cfg) => {
+                let old_lang = self.config.language.clone();
+                let old_vad = self.config.vad.enabled;
+                let old_wake = self.config.wake_mode;
+
+                self.config = *cfg;
+                let _ = self.config.save();
+
+                if self.config.vad.enabled != old_vad {
+                    self.vad_enabled
+                        .store(self.config.vad.enabled, Ordering::SeqCst);
+                    crate::input::hotkeys::set_vad_enabled(self.config.vad.enabled);
+                    crate::ui::tray::set_vad_state(self.config.vad.enabled);
+                }
+                if self.config.wake_mode != old_wake {
+                    crate::ui::tray::set_wake_state(self.config.wake_mode);
+                }
+                if self.config.language != old_lang {
+                    crate::lang::load_locale(&self.config.language);
+                }
+                dlog!("Applied: engine_mode={}, trailing_space={}, lang={}, dark={}",
+                    self.config.engine_mode,
+                    self.config.text_fix.trailing_space,
+                    self.config.language,
+                    self.config.dark_mode);
+                true
+            }
             AppCommand::EditUserDict => { self.on_edit_user_dict(); true }
             AppCommand::Quit => {
+                crate::ui::settings::request_quit();
                 crate::ui::tray::request_exit();
                 false
             }
@@ -345,18 +422,33 @@ impl App {
         }
     }
 
-    fn on_open_settings(&self) {
-        log::info!("Открытие настроек (будет egui)");
-        #[cfg(target_os = "windows")]
-        unsafe {
-            let title: Vec<u16> = "VoxMiM\0".encode_utf16().collect();
-            let msg: Vec<u16> = "Окно настроек появится в следующей версии.\0".encode_utf16().collect();
-            windows_sys::Win32::UI::WindowsAndMessaging::MessageBoxW(
-                std::ptr::null_mut(),
-                msg.as_ptr(),
-                title.as_ptr(),
-                0,
-            );
+    fn on_open_settings(&mut self) {
+        // Если процесс настроек ещё жив — не запускаем второй
+        if let Some(ref mut child) = self.settings_process {
+            match child.try_wait() {
+                Ok(None) => {
+                    log::info!("Окно настроек уже открыто");
+                    return;
+                }
+                _ => {} // процесс завершился, можно запустить новый
+            }
+        }
+        // Запускаем отдельное приложение настроек
+        let settings_exe = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|p| p.join("voxmim-settings.exe")))
+            .unwrap_or_else(|| std::path::PathBuf::from("voxmim-settings.exe"));
+        if settings_exe.exists() {
+            match std::process::Command::new(&settings_exe).spawn() {
+                Ok(child) => {
+                    self.settings_process = Some(child);
+                    log::info!("Окно настроек (отдельное приложение)");
+                }
+                Err(e) => log::error!("Не удалось запустить настройки: {e}"),
+            }
+        } else {
+            log::warn!("voxmim-settings.exe не найден, использую встроенное окно");
+            crate::ui::settings::show();
         }
     }
 
@@ -379,10 +471,32 @@ impl App {
     }
 
     fn on_start(&mut self) {
+        if self.state == AppState::Recording {
+            // VAD tap-режим: повторный Insert = принудительная остановка
+            if self.vad_enabled.load(Ordering::SeqCst) {
+                log::info!("▶ Принудительная остановка");
+                self.force_stop();
+            }
+            return;
+        }
         if self.state != AppState::Idle { return; }
         self.state = AppState::Recording;
         self.recording.store(true, Ordering::SeqCst);
-        log::info!("▶ Запись");
+        log::info!("▶ Запись началась");
+    }
+
+    fn force_stop(&mut self) {
+        self.state = AppState::Processing;
+        self.recording.store(false, Ordering::SeqCst);
+        let samples = {
+            let mut buf = self.audio_buf.lock().unwrap();
+            std::mem::take(&mut *buf)
+        };
+        if samples.len() >= 16000 {
+            let _ = self.whisper_tx.send(samples);
+        } else {
+            self.state = AppState::Idle;
+        }
     }
 
     fn on_stop(&mut self) {
@@ -395,7 +509,7 @@ impl App {
             std::mem::take(&mut *buf)
         };
 
-        log::info!("⏹ Запись ({} сэмплов)", samples.len());
+        log::info!("⏹ Записано ({} сэмплов)", samples.len());
         if samples.len() < 16000 {
             log::warn!("Слишком короткая запись");
             self.state = AppState::Idle;
@@ -412,7 +526,7 @@ impl App {
             return;
         }
 
-        let fixed = fix_text(text, &self.config.text_fix, &self.dict, &self.user_dict);
+        let fixed = fix_text(text, &self.config.text_fix, &self.user_dict);
         log::info!("📝 {fixed}");
 
         if let Some(action) = self.executor.try_execute(&fixed, self.config.command_max_words) {
@@ -452,9 +566,99 @@ impl App {
             CommandAction::SelectionMore => log::info!("Больше"),
             CommandAction::SelectionLess => log::info!("Меньше"),
             CommandAction::ToggleMathMode(e) => {
-                let _ = self.cmd_tx.send(AppCommand::ToggleMathMode(*e));
+                if *e != self.config.math_mode {
+                    let _ = self.cmd_tx.send(AppCommand::ToggleMathMode);
+                }
             }
             CommandAction::None => {}
+        }
+    }
+
+    fn reload_config(&mut self) {
+        let new_cfg = Config::load();
+        let old = self.config.clone();
+        self.config = new_cfg;
+
+        if self.config.vad.enabled != old.vad.enabled {
+            self.vad_enabled.store(self.config.vad.enabled, Ordering::SeqCst);
+            crate::input::hotkeys::set_vad_enabled(self.config.vad.enabled);
+        }
+        if self.config.language != old.language {
+            crate::lang::load_locale(&self.config.language);
+        }
+
+        let mut changes = Vec::new();
+        if old.engine_mode != self.config.engine_mode {
+            changes.push(format!("engine_mode={}→{}", old.engine_mode, self.config.engine_mode));
+        }
+        if old.detector_mode != self.config.detector_mode {
+            changes.push(format!("detector_mode={}→{}", old.detector_mode, self.config.detector_mode));
+        }
+        if old.use_gpu != self.config.use_gpu {
+            changes.push(format!("use_gpu={}→{}", old.use_gpu, self.config.use_gpu));
+        }
+        if old.wake_mode != self.config.wake_mode {
+            changes.push(format!("wake_mode={}→{}", old.wake_mode, self.config.wake_mode));
+        }
+        if old.vad.enabled != self.config.vad.enabled {
+            changes.push(format!("vad.enabled={}→{}", old.vad.enabled, self.config.vad.enabled));
+        }
+        if old.vad.aggressiveness != self.config.vad.aggressiveness {
+            changes.push(format!("vad.aggressiveness={}→{}", old.vad.aggressiveness, self.config.vad.aggressiveness));
+        }
+        if old.vad.silence_duration_secs != self.config.vad.silence_duration_secs {
+            changes.push(format!("vad.timeout={:.1}→{:.1}", old.vad.silence_duration_secs, self.config.vad.silence_duration_secs));
+        }
+        if old.text_fix.trailing_space != self.config.text_fix.trailing_space {
+            changes.push(format!("trail={}→{}", old.text_fix.trailing_space, self.config.text_fix.trailing_space));
+        }
+        if old.text_fix.fix_hallucinations != self.config.text_fix.fix_hallucinations {
+            changes.push(format!("fix_hallucinations={}→{}", old.text_fix.fix_hallucinations, self.config.text_fix.fix_hallucinations));
+        }
+        if old.text_fix.fix_user_dict != self.config.text_fix.fix_user_dict {
+            changes.push(format!("fix_user_dict={}→{}", old.text_fix.fix_user_dict, self.config.text_fix.fix_user_dict));
+        }
+        if old.text_fix.fix_repetitions != self.config.text_fix.fix_repetitions {
+            changes.push(format!("fix_repetitions={}→{}", old.text_fix.fix_repetitions, self.config.text_fix.fix_repetitions));
+        }
+        if old.text_fix.fix_punctuation != self.config.text_fix.fix_punctuation {
+            changes.push(format!("fix_punctuation={}→{}", old.text_fix.fix_punctuation, self.config.text_fix.fix_punctuation));
+        }
+        if old.math_mode != self.config.math_mode {
+            changes.push(format!("math_mode={}→{}", old.math_mode, self.config.math_mode));
+        }
+        if old.noise_filter_enabled != self.config.noise_filter_enabled {
+            changes.push(format!("noise_filter={}→{}", old.noise_filter_enabled, self.config.noise_filter_enabled));
+        }
+        if old.warmup_on_start != self.config.warmup_on_start {
+            changes.push(format!("warmup={}→{}", old.warmup_on_start, self.config.warmup_on_start));
+        }
+        if old.show_result != self.config.show_result {
+            changes.push(format!("show_result={}→{}", old.show_result, self.config.show_result));
+        }
+        if old.log_enabled != self.config.log_enabled {
+            changes.push(format!("log_enabled={}→{}", old.log_enabled, self.config.log_enabled));
+        }
+        if old.dark_mode != self.config.dark_mode {
+            changes.push(format!("dark_mode={}→{}", old.dark_mode, self.config.dark_mode));
+        }
+        if old.language != self.config.language {
+            changes.push(format!("language={}→{}", old.language, self.config.language));
+        }
+        if old.command_max_words != self.config.command_max_words {
+            changes.push(format!("cmd_max_words={}→{}", old.command_max_words, self.config.command_max_words));
+        }
+        if old.model_path != self.config.model_path {
+            changes.push(format!("model_path={}→{}", old.model_path.display(), self.config.model_path.display()));
+        }
+        if old.detector_model != self.config.detector_model {
+            changes.push(format!("detector_model={}→{}", old.detector_model.display(), self.config.detector_model.display()));
+        }
+
+        if changes.is_empty() {
+            log::info!("Настройки перезагружены (без изменений)");
+        } else {
+            log::info!("Изменено: {}. Перезагружаем", changes.join(", "));
         }
     }
 }

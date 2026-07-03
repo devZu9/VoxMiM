@@ -5,6 +5,77 @@ All notable changes to VoxMiM will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.2] — 2026-07-03
+
+### Added
+- **Отдельное окно настроек (Fenestra)** — `voxmim-settings.exe` с собственным UI на Fenestra
+- **Named Pipe IPC** — связь между `voxmim.exe` и `voxmim-settings.exe` через Win32 Named Pipe
+- **Named Mutex** — single instance для окна настроек (``Local\VoxMiMSettingsInstance``)
+- **Локализация окна настроек** — `lang/ru.json` + `lang/en.json` через `include_str!`
+- **Тёмная тема** — переключение в окне настроек, применяется через `Theme::dark()`
+- **Always-on-top** — `WH_CBT` hook с `WS_EX_TOPMOST` + `SetWindowPos(HWND_TOPMOST)` для окна настроек
+- **Кастомная кнопка закрытия** — через Fenestra `Msg::Close` → `std::process::exit(0)`
+- **`install_topmost_hook()`** — CBT-хук на `HCBT_CREATEWND` + `HCBT_ACTIVATE` для гарантированного «поверх всех»
+- **`__run.bat` / `__run_debug.bat`** — `cargo build --workspace`, вывод в консоль через Tee-Object
+
+### Changed
+- **Отступы в окне настроек** — `SP1` (4px) → `SP2` (8px) для gap между элементами
+- **Файлы сборки** — `build.rs` копирует `settings/` и `lang/` в `target/debug/`
+- **Пользовательский словарь** — `save()` сортирует ключи: ASCII → Кириллица
+- **Настройки** — `reload_config()` логирует только изменённые поля (22 поля)
+
+### Fixed
+- **Крэш настроек** — убран субклассинг окна с `WM_NCCALCSIZE`, возвращён `remove_window_caption()` с `EnumWindows` + задержка
+- **Окно не поверх всех** — исправлено через CBT-хук (двойная фиксация: стиль + z-order)
+
+### Removed
+- **Slint UI** — старый `ui/settings.rs` + `ui/settings.slint` (заменён на Fenestra)
+- **`image` крейт** из зависимостей `settings` — иконка вшивается через `embed-resource`
+- **Мёртвый код** из `text/dictionary.rs`: `Dictionary::path()`, `Dictionary::new()`, `Dictionary::load_lang()`
+
+## [0.7.1] — 2026-07-02
+
+### Fixed
+- **Окно настроек** — `winit` паниковал вне главного потока. Добавлен `any_thread(true)` через `event_loop_builder`
+- **Локализация** — `lang::load_locale()` вызывалась после старта трея, меню показывало ключи вместо строк. Вызов перенесён до спавна трея
+- **Повторное открытие** — окно больше не крашится при повторном вызове (hide/reopen). `Visible` → `Minimized` для корректной работы event loop
+- **Локали без файлов** — встроены в `.exe` через `include_str!`
+- **Размер бинарника** — `rfd` заменён на Win32 `SHBrowseForFolderW`, лишние Linux-зависимости удалены
+
+### Added
+- **Два независимых WhisperEngine** — транскрайбер и детектор не блокируют друг друга
+- **Persistent-режим whisper** — модель загружается один раз и остаётся в памяти (`keep_model_loaded`)
+- **Чекбоксы в настройках** — «Не выгружать модель из памяти» и «Не выгружать модель детектора»
+- **Предупреждение о большой модели** — лог-сообщение, если `detector_model` > 500 МБ
+- **Окно настроек (egui):** иконка `blue-voice.png`, hide/reopen с `Minimized`
+- **Файловый логгер** — пишет в `logs/voxmim.log` рядом с `.exe`, переключается в настройках
+- **build.rs** — копирует `lang/*.json` в `target/debug/` при сборке
+
+## [0.7.0] — 2026-07-02
+  - VAD только автостоп: Insert (tap) → говоришь → тишина → само остановилось
+  - Tap-режим: Insert переключает запись, повторный Insert = принудительная остановка
+  - Hold-режим (VAD выкл): прежнее поведение (зажал → говоришь → отпустил)
+- **Wake Word:** единый аудио-захват через `start_capture_multi()` (fan-out)
+  - Убран второй AudioCapture — больше нет WASAPI-конфликтов
+  - Wake детекция + транскрибация команды
+- **Единый аудио-пайплайн:** `audio/capture.rs` → `start_capture_multi(txs)`
+- **Локализация (i18n):** новый модуль `src/lang.rs` + `lang/ru.json` + `lang/en.json`
+  - Трей-меню и диалог «Добавить слово» читают строки из локали
+  - Переключение через `config.language`
+- **Трей-меню с чекбоксами:** галочки для «Автостоп» и «Голосовая активация»
+- **`input/hotkeys.rs`:** VAD_ENABLED статик, tap-режим при VAD
+
+### Changed
+- `config.vad.enabled` → включает/выключает автостоп
+- `AppCommand::ToggleVad` / `ToggleWake` / `ToggleMathMode` — теперь без параметра (toggle)
+- `app.rs` — `on_start()` при VAD: повторный Insert = force_stop
+
+### Docs
+- `ROADMAP.md` — Фазы 11 (Wake), 11a (Wake+VAD), 13 (i18n) — 🟢
+- `TECHNICAL_SPECIFICATION.md` — разделы 13 (VAD+Wake), 14 (i18n)
+- `README.md` / `README_EN.md` — VAD, многоязычный интерфейс
+- `summary.md` — v0.7.0
+
 ## [0.6.0] — 2026-07-02
 
 ### Added

@@ -1,4 +1,5 @@
 use crate::app::AppCommand;
+use crate::lang;
 use crossbeam_channel::Sender;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -16,11 +17,15 @@ const TIMER_ID: usize = 1;
 
 const CMD_SETTINGS: u32 = 1000;
 const CMD_CONSOLE: u32 = 1004;
-const CMD_VAD: u32 = 1001;
+const CMD_AUTOSTOP: u32 = 1001;
+const CMD_WAKE: u32 = 1007;
 const CMD_MATH: u32 = 1002;
 const CMD_QUIT: u32 = 1003;
 const CMD_ADD_WORD: u32 = 1005;
 const CMD_EDIT_DICT: u32 = 1006;
+
+static TRAY_AUTOSTOP: AtomicBool = AtomicBool::new(false);
+static TRAY_WAKE: AtomicBool = AtomicBool::new(false);
 
 unsafe extern "system" {
     fn RegisterClassW(wc: *const WNDCLASSW) -> u16;
@@ -124,6 +129,8 @@ const NIM_DELETE: u32 = 0x00000002;
 const MF_STRING: u32 = 0x00000000;
 const MF_SEPARATOR: u32 = 0x00000800;
 const MF_GRAYED: u32 = 0x00000001;
+const MF_CHECKED: u32 = 0x00000008;
+const MF_UNCHECKED: u32 = 0x00000000;
 const TPM_RIGHTBUTTON: u32 = 0x00000002;
 const TPM_BOTTOMALIGN: u32 = 0x00000020;
 
@@ -313,8 +320,17 @@ unsafe extern "system" fn wnd_proc(
                             }
                         }
                     }
-                    CMD_VAD => { let _ = tx.send(AppCommand::ToggleVad(true)); }
-                    CMD_MATH => { let _ = tx.send(AppCommand::ToggleMathMode(true)); }
+                    CMD_AUTOSTOP => {
+                        let _was = TRAY_AUTOSTOP.fetch_xor(true, Ordering::SeqCst);
+                        let _ = tx.send(AppCommand::ToggleVad);
+                    }
+                    CMD_WAKE => {
+                        let _was = TRAY_WAKE.fetch_xor(true, Ordering::SeqCst);
+                        let _ = tx.send(AppCommand::ToggleWake);
+                    }
+                    CMD_MATH => {
+                        let _ = tx.send(AppCommand::ToggleMathMode);
+                    }
                     CMD_ADD_WORD => {
                         let hwnd_parent = TRAY_HWND.load(Ordering::SeqCst) as *mut std::ffi::c_void;
                         let instance = unsafe { GetModuleHandleW(std::ptr::null()) };
@@ -343,17 +359,20 @@ unsafe fn show_menu(hwnd: *mut std::ffi::c_void) {
     let menu = unsafe { CreatePopupMenu() };
     if menu.is_null() { return; }
 
-    let ver = format!("VoxMiM v{}\0", env!("CARGO_PKG_VERSION"));
-    let ver_w: Vec<u16> = ver.encode_utf16().collect();
+    // Версия
+    let ver = lang::t("tray.menu.version").replace("{version}", env!("CARGO_PKG_VERSION"));
+    let ver_w: Vec<u16> = format!("{ver}\0").encode_utf16().collect();
     unsafe { AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, ver_w.as_ptr()); }
 
     unsafe { AppendMenuW(menu, MF_SEPARATOR, 0, std::ptr::null()); }
 
-    let set_w: Vec<u16> = "Настройки\0".encode_utf16().collect();
+    // Настройки
+    let set_w = lang::t_utf16("tray.menu.settings");
     unsafe { AppendMenuW(menu, MF_STRING, CMD_SETTINGS as usize, set_w.as_ptr()); }
 
     unsafe { AppendMenuW(menu, MF_SEPARATOR, 0, std::ptr::null()); }
 
+    // Показать/скрыть окно
     let con_visible = unsafe {
         unsafe extern "system" {
             fn IsWindowVisible(hWnd: *mut std::ffi::c_void) -> i32;
@@ -361,29 +380,41 @@ unsafe fn show_menu(hwnd: *mut std::ffi::c_void) {
         let raw = crate::CONSOLE_HWND.load(std::sync::atomic::Ordering::SeqCst);
         raw != 0 && IsWindowVisible(raw as *mut std::ffi::c_void) != 0
     };
-    let con_label = if con_visible { "Скрыть окно" } else { "Показать окно" };
-    let con_w: Vec<u16> = format!("{con_label}\0").encode_utf16().collect();
+    let con_key = if con_visible { "tray.menu.toggle_console.hide" } else { "tray.menu.toggle_console.show" };
+    let con_w = lang::t_utf16(con_key);
     unsafe { AppendMenuW(menu, MF_STRING, CMD_CONSOLE as usize, con_w.as_ptr()); }
 
     unsafe { AppendMenuW(menu, MF_SEPARATOR, 0, std::ptr::null()); }
 
-    let add_w: Vec<u16> = "Добавить слово...\0".encode_utf16().collect();
+    // Добавить слово / Редактировать словарь
+    let add_w = lang::t_utf16("tray.menu.add_word");
     unsafe { AppendMenuW(menu, MF_STRING, CMD_ADD_WORD as usize, add_w.as_ptr()); }
 
-    let edit_w: Vec<u16> = "Редактировать словарь\0".encode_utf16().collect();
+    let edit_w = lang::t_utf16("tray.menu.edit_dict");
     unsafe { AppendMenuW(menu, MF_STRING, CMD_EDIT_DICT as usize, edit_w.as_ptr()); }
 
     unsafe { AppendMenuW(menu, MF_SEPARATOR, 0, std::ptr::null()); }
 
-    let vad_w: Vec<u16> = "VAD\0".encode_utf16().collect();
-    unsafe { AppendMenuW(menu, MF_STRING, CMD_VAD as usize, vad_w.as_ptr()); }
+    // Голосовая активация (Wake Word) — с галочкой
+    let wake_on = TRAY_WAKE.load(Ordering::SeqCst);
+    let wake_flags = MF_STRING | if wake_on { MF_CHECKED } else { MF_UNCHECKED };
+    let wake_w = lang::t_utf16("tray.menu.voice_activation");
+    unsafe { AppendMenuW(menu, wake_flags, CMD_WAKE as usize, wake_w.as_ptr()); }
 
-    let math_w: Vec<u16> = "Math Mode\0".encode_utf16().collect();
+    // Автостоп (VAD) — с галочкой
+    let vad_on = TRAY_AUTOSTOP.load(Ordering::SeqCst);
+    let vad_flags = MF_STRING | if vad_on { MF_CHECKED } else { MF_UNCHECKED };
+    let vad_w = lang::t_utf16("tray.menu.auto_stop");
+    unsafe { AppendMenuW(menu, vad_flags, CMD_AUTOSTOP as usize, vad_w.as_ptr()); }
+
+    // Math Mode
+    let math_w = lang::t_utf16("tray.menu.math_mode");
     unsafe { AppendMenuW(menu, MF_STRING, CMD_MATH as usize, math_w.as_ptr()); }
 
     unsafe { AppendMenuW(menu, MF_SEPARATOR, 0, std::ptr::null()); }
 
-    let quit_w: Vec<u16> = "Выход\0".encode_utf16().collect();
+    // Выход
+    let quit_w = lang::t_utf16("tray.menu.quit");
     unsafe { AppendMenuW(menu, MF_STRING, CMD_QUIT as usize, quit_w.as_ptr()); }
 
     let mut pt: POINT = unsafe { std::mem::zeroed() };
@@ -395,6 +426,14 @@ unsafe fn show_menu(hwnd: *mut std::ffi::c_void) {
         PostMessageW(hwnd, WM_NULL, 0, 0);
         DestroyMenu(menu);
     }
+}
+
+pub fn set_vad_state(on: bool) {
+    TRAY_AUTOSTOP.store(on, Ordering::SeqCst);
+}
+
+pub fn set_wake_state(on: bool) {
+    TRAY_WAKE.store(on, Ordering::SeqCst);
 }
 
 pub(crate) fn icon_from_bytes(data: &[u8]) -> *mut std::ffi::c_void {

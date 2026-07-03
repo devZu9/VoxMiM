@@ -2,6 +2,7 @@ use regex::Regex;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::RwLock;
+use crate::dlog;
 
 struct CachedEntry {
     regex: Regex,
@@ -93,6 +94,7 @@ impl UserDict {
         }
 
         log::debug!("user_dict: записей в кеше {}", cache.len());
+        dlog!("user_dict: apply() на «{text}»");
 
         let mut result = String::with_capacity(text.len());
         let mut last_end = 0;
@@ -113,8 +115,8 @@ impl UserDict {
                 };
 
                 if left_ok && right_ok {
-                    log::debug!("user_dict: найдено «{}» на byte[{},{}]",
-                        &text[m.start()..m.end()], m.start(), m.end());
+                    dlog!("user_dict: найдено «{}» → «{}» на byte[{},{}]",
+                        &text[m.start()..m.end()], entry.value, m.start(), m.end());
                     result.push_str(&text[last_end..m.start()]);
                     result.push_str(&entry.value);
                     last_end = m.end();
@@ -125,7 +127,7 @@ impl UserDict {
         result.push_str(&text[last_end..]);
 
         if result != text {
-            log::debug!("user_dict: замена сработала: «{text}» → «{result}»");
+            dlog!("user_dict: замена: «{text}» → «{result}»");
         }
 
         result
@@ -154,11 +156,27 @@ impl UserDict {
         }
 
         let guard = self.map.read().unwrap();
-        let map: HashMap<&str, &str> = guard.iter()
+
+        // Сортируем: сначала ASCII (английские), потом Cyrillic, по алфавиту внутри групп
+        let mut entries: Vec<(&str, &str)> = guard.iter()
             .map(|(k, v)| (k.as_str(), v.as_str()))
             .collect();
+        entries.sort_by(|a, b| {
+            let a_is_ascii = a.0.chars().all(|c| c.is_ascii());
+            let b_is_ascii = b.0.chars().all(|c| c.is_ascii());
+            if a_is_ascii != b_is_ascii {
+                return if a_is_ascii { std::cmp::Ordering::Less } else { std::cmp::Ordering::Greater };
+            }
+            a.0.cmp(b.0)
+        });
 
-        match serde_json::to_string_pretty(&map) {
+        // serde_json::Map сохраняет порядок вставки (IndexMap)
+        let map: serde_json::Map<String, serde_json::Value> = entries.iter()
+            .map(|(k, v)| (k.to_string(), serde_json::Value::String(v.to_string())))
+            .collect();
+        let value = serde_json::Value::Object(map);
+
+        match serde_json::to_string_pretty(&value) {
             Ok(json) => {
                 if let Err(e) = std::fs::write(&path, json) {
                     log::error!("Ошибка сохранения user_dict.json: {e}");

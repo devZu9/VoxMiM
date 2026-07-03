@@ -41,6 +41,12 @@ struct KBDLLHOOKSTRUCT {
 static HOOK_REC: AtomicBool = AtomicBool::new(false);
 #[cfg(target_os = "windows")]
 static HOOK_TX: Mutex<Option<Sender<AppCommand>>> = Mutex::new(None);
+#[cfg(target_os = "windows")]
+static VAD_ENABLED: AtomicBool = AtomicBool::new(false);
+
+pub fn set_vad_enabled(enabled: bool) {
+    VAD_ENABLED.store(enabled, Ordering::SeqCst);
+}
 
 pub struct HotkeyListener {
     _hook: Option<std::thread::JoinHandle<()>>,
@@ -175,16 +181,34 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: usize, lparam: isize) -> 
     }
 
     let is_down = msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN;
+    let vad = VAD_ENABLED.load(Ordering::SeqCst);
 
-    if is_down && !HOOK_REC.load(Ordering::SeqCst) {
-        // Проверяем физическое состояние Ctrl напрямую у системы
-        if unsafe { GetAsyncKeyState(VK_CONTROL as i32) as u32 } & 0x8000 != 0 {
+    if is_down {
+        let ctrl_held = unsafe { GetAsyncKeyState(VK_CONTROL as i32) as u32 } & 0x8000 != 0;
+        if !ctrl_held {
+            return result;
+        }
+
+        if vad {
+            // Tap-режим: Insert переключает запись
+            let was = HOOK_REC.fetch_xor(true, Ordering::SeqCst);
+            if let Some(ref tx) = *HOOK_TX.lock().unwrap() {
+                if was {
+                    let _ = tx.send(AppCommand::StopRecording);
+                } else {
+                    let _ = tx.send(AppCommand::StartRecording);
+                }
+            }
+        } else if !HOOK_REC.load(Ordering::SeqCst) {
+            // Hold-режим: Insert зажат → запись
             HOOK_REC.store(true, Ordering::SeqCst);
             if let Some(ref tx) = *HOOK_TX.lock().unwrap() {
                 let _ = tx.send(AppCommand::StartRecording);
             }
         }
-    } else if !is_down && HOOK_REC.load(Ordering::SeqCst) {
+    } else if !is_down && HOOK_REC.load(Ordering::SeqCst) && !vad {
+        // Hold-режим: отпустили Insert → стоп
+        // При VAD отпускание не останавливает — автостоп сам
         HOOK_REC.store(false, Ordering::SeqCst);
         if let Some(ref tx) = *HOOK_TX.lock().unwrap() {
             let _ = tx.send(AppCommand::StopRecording);

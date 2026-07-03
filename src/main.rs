@@ -2,8 +2,11 @@ mod app;
 mod audio;
 mod commands;
 mod config;
+mod debug_log;
 mod download;
 mod input;
+mod lang;
+mod pipe;
 mod stt;
 mod text;
 mod ui;
@@ -15,10 +18,76 @@ use std::sync::atomic::AtomicIsize;
 #[cfg(target_os = "windows")]
 pub static CONSOLE_HWND: AtomicIsize = AtomicIsize::new(0);
 
+struct TeeWriter {
+    file: std::sync::Arc<std::sync::Mutex<std::fs::File>>,
+}
+
+impl std::io::Write for TeeWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let _ = std::io::stdout().write(buf);
+        self.file.lock().unwrap().write(buf)
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        let _ = std::io::stdout().flush();
+        self.file.lock().unwrap().flush()
+    }
+}
+
+fn init_logger(config: &Config) {
+    let mut builder = env_logger::Builder::from_env(
+        env_logger::Env::default().default_filter_or("info"),
+    );
+    builder.format_timestamp_millis();
+
+    if config.log_enabled {
+        let dir = config
+            .log_dir
+            .clone()
+            .unwrap_or_else(config::logs_dir);
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("voxmim.log");
+        if let Ok(file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+        {
+            let writer = TeeWriter {
+                file: std::sync::Arc::new(std::sync::Mutex::new(file)),
+            };
+            builder.target(env_logger::Target::Pipe(Box::new(writer)));
+            log::info!("Лог-файл: {}", path.display());
+        }
+    }
+
+    let _ = builder.try_init();
+}
+
 fn main() {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
-        .format_timestamp_millis()
-        .init();
+    // Panic hook — показывает консоль и выводит ошибку перед падением
+    std::panic::set_hook(Box::new(|info| {
+        unsafe {
+            unsafe extern "system" {
+                fn GetConsoleWindow() -> isize;
+                fn ShowWindow(hWnd: *mut std::ffi::c_void, nCmdShow: i32) -> i32;
+            }
+            let hwnd = GetConsoleWindow() as *mut std::ffi::c_void;
+            if !hwnd.is_null() { ShowWindow(hwnd, 5); /* SW_SHOW */ }
+        }
+        dlog!("PANIC: {info}");
+        eprintln!("VoxMiM упала. Лог: logs/voxmim_debug.log");
+        let _ = std::io::stdin().read_line(&mut String::new());
+    }));
+
+    let config = Config::load();
+
+    // Debug-лог — пишет всё с самого старта в logs/voxmim_debug.log
+    debug_log::init();
+    dlog!("VoxMiM v{} старт", env!("CARGO_PKG_VERSION"));
+
+    init_logger(&config);
+
+    // Named Pipe — слушаем сигналы перезагрузки настроек
+    pipe::start_listener();
 
     if !single_instance() {
         log::error!("Другой экземпляр VoxMiM уже запущен");
@@ -28,7 +97,6 @@ fn main() {
     set_dpi_awareness();
     hide_console();
 
-    let config = Config::load();
     log::info!("VoxMiM v{}", env!("CARGO_PKG_VERSION"));
     log::info!("Конфиг загружен: {:?}", config);
 

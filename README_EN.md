@@ -10,6 +10,8 @@
 
 - **Push-to-talk:** Ctrl+Insert → speak → release → text in active window
 - **Wake Word (optional):** "listen", "bro record" — voice activation without button
+- **VAD (Auto-Stop):** tap Insert once → speak freely → silence → auto-submit
+- **Multilingual UI:** RU/EN, switch in `config.json` (`language`)
 - **Recognition:** Whisper large-v3 via CUDA 12.4 (NVIDIA GPU)
 - **Word merging:** dictionary 200K+ Russian words + heuristics + SymSpell
 - **Voice commands:** 199 commands (paste, hotkey, mouse, scroll, grid)
