@@ -1,6 +1,9 @@
 use crate::app::AppCommand;
+use crate::stt::engine::{write_wav, KEEP_WAV};
 use crate::vad::detector::{VadDetector, VadEvent};
+use chrono::Local;
 use crossbeam_channel::Sender;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 
@@ -10,7 +13,6 @@ impl AudioProcessor {
     pub fn spawn(
         audio_rx: mpsc::Receiver<Vec<f32>>,
         cmd_tx: Sender<AppCommand>,
-        whisper_tx: Sender<Vec<f32>>,
         recording: Arc<AtomicBool>,
         audio_buf: Arc<Mutex<Vec<f32>>>,
         vad_enabled: Arc<AtomicBool>,
@@ -29,6 +31,8 @@ impl AudioProcessor {
                 let mut was_ptt_stop = false;
                 let mut speech_detected = false;
                 let mut total_frames = 0usize;
+                let mut vad_accum: Vec<f32> = Vec::new();
+                let vad_accum_target = (sample_rate as usize) / 10; // 100ms
 
                 while let Ok(chunk) = audio_rx.recv() {
                     ring_buf.extend_from_slice(&chunk);
@@ -49,42 +53,58 @@ impl AudioProcessor {
                         }
 
                         if is_vad {
-                            match vad.process_chunk(&chunk) {
-                                VadEvent::SpeechStart => {
-                                    speech_detected = true;
-                                }
-                                VadEvent::Speech => {
-                                    if !speech_detected {
+                            // Копим чанки до ~100мс, потом отдаём VAD
+                            vad_accum.extend_from_slice(&chunk);
+                            if vad_accum.len() >= vad_accum_target {
+                                match vad.process_chunk(&vad_accum) {
+                                    VadEvent::SpeechStart => {
                                         speech_detected = true;
                                     }
-                                }
-                                VadEvent::Silence => {
-                                    if speech_detected {
-                                        // Пост-речь: тишина превысила silence_duration_secs → автостоп
-                                        recording.store(false, Ordering::SeqCst);
-                                        let samples = {
-                                            let mut b = audio_buf.lock().unwrap();
-                                            std::mem::take(&mut *b)
-                                        };
-                                        if samples.len() >= 16000 {
-                                            let _ = whisper_tx.send(samples);
+                                    VadEvent::Speech => {
+                                        if !speech_detected {
+                                            speech_detected = true;
                                         }
-                                        speech_detected = false;
-                                        total_frames = 0;
-                                        let _ = cmd_tx.send(AppCommand::StopRecording);
-                                        log::info!("Автостоп: запись остановлена по тишине");
-                                    } else {
-                                        // Пре-речь: ждём начала речи
-                                        total_frames += chunk.len();
-                                        if total_frames >= start_timeout_frames {
+                                    }
+                                    VadEvent::Silence => {
+                                        if speech_detected {
+                                            // Пост-речь: тишина превысила silence_duration_secs → автостоп
                                             recording.store(false, Ordering::SeqCst);
-                                            let _ = audio_buf.lock().unwrap().clear();
+                                            speech_detected = false;
                                             total_frames = 0;
                                             let _ = cmd_tx.send(AppCommand::StopRecording);
-                                            log::info!("Таймаут ожидания речи: запись отменена");
+                                            log::info!("Автостоп: запись остановлена по тишине");
+                                        } else {
+                                            // Пре-речь: ждём начала речи
+                                            total_frames += vad_accum.len();
+                                            if total_frames >= start_timeout_frames {
+                                                recording.store(false, Ordering::SeqCst);
+                                                // Если keep_wav включён — сохраняем VAD-буфер для диагностики
+                                                if KEEP_WAV.load(Ordering::SeqCst) {
+                                                    let samples = audio_buf.lock().unwrap().clone();
+                                                    if !samples.is_empty() {
+                                                        let ts = Local::now().format("%Y-%m-%d_%H-%M-%S%.3f");
+                                                        let dir = std::env::current_exe()
+                                                            .ok().and_then(|p| p.parent().map(|p| p.join("wavs")))
+                                                            .unwrap_or_else(|| PathBuf::from("wavs"));
+                                                        let _ = std::fs::create_dir_all(&dir);
+                                                        let path = dir.join(format!("vad_debug_{ts}.wav"));
+                                                        if let Err(e) = write_wav(&path, &samples, sample_rate) {
+                                                            log::warn!("VAD debug WAV: {e}");
+                                                        } else {
+                                                            log::info!("VAD debug: сохранён {}", path.display());
+                                                        }
+                                                    }
+                                                }
+                                                let _ = audio_buf.lock().unwrap().clear();
+                                                total_frames = 0;
+                                                let _ = cmd_tx.send(AppCommand::StopRecording);
+                                                let rms = (vad_accum.iter().map(|s| s * s).sum::<f32>() / vad_accum.len() as f32).sqrt();
+                                                log::info!("Таймаут ожидания речи: {:.1}с тишины без речи (rms={rms:.4})", start_timeout_secs);
+                                            }
                                         }
                                     }
                                 }
+                                vad_accum.clear();
                             }
                         }
                     } else {
@@ -93,6 +113,7 @@ impl AudioProcessor {
                             speech_detected = false;
                             total_frames = 0;
                         }
+                        vad_accum.clear();
                     }
                 }
             })

@@ -118,6 +118,7 @@ impl App {
         let mut trans = WhisperEngine::new(&bins_path);
         trans.set_language(&config.language);
         trans.set_mode(crate::stt::engine::EngineMode::from_str(&config.engine_mode));
+        crate::stt::engine::set_keep_wav_global(config.keep_wav);
         if config.model_path.exists() {
             if let Err(e) = trans.load_model(&config.model_path) {
                 log::error!("Транскрайбер: {e}");
@@ -213,7 +214,6 @@ impl App {
         AudioProcessor::spawn(
             audio_rx,
             cmd_tx.clone(),
-            whisper_tx.clone(),
             recording.clone(),
             audio_buf.clone(),
             vad_enabled.clone(),
@@ -524,6 +524,8 @@ impl App {
     }
 
     fn on_result(&mut self, text: &str) {
+        // Игнорируем устаревший результат, если уже началась новая запись
+        if self.state == AppState::Recording { return; }
         let text = text.trim();
         if text.is_empty() {
             self.state = AppState::Idle;
@@ -657,6 +659,10 @@ impl App {
         }
         if old.detector_model != self.config.detector_model {
             changes.push(format!("detector_model={}→{}", old.detector_model.display(), self.config.detector_model.display()));
+        }
+        if old.keep_wav != self.config.keep_wav {
+            crate::stt::engine::set_keep_wav_global(self.config.keep_wav);
+            changes.push(format!("keep_wav={}→{}", old.keep_wav, self.config.keep_wav));
         }
 
         if changes.is_empty() {

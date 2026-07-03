@@ -67,6 +67,8 @@ pub struct Config {
     pub keep_model_loaded: Option<bool>,
     #[serde(default, skip_serializing)]
     pub keep_detector_loaded: Option<bool>,
+    #[serde(default)]
+    pub keep_wav: bool,
 }
 
 fn default_engine_mode() -> String { "server".to_string() }
@@ -184,6 +186,7 @@ impl Default for Config {
             dark_mode: false,
             keep_model_loaded: None,
             keep_detector_loaded: None,
+            keep_wav: false,
         }
     }
 }

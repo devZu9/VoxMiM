@@ -200,14 +200,10 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: usize, lparam: isize) -> 
                 return result; // автоповтор Insert — игнорируем
             }
             VAD_KEY_LOCK.store(true, Ordering::SeqCst);
-            // Tap-режим: Insert переключает запись
-            let was = HOOK_REC.fetch_xor(true, Ordering::SeqCst);
+            // VAD tap: Insert всегда шлёт StartRecording.
+            // on_start() сам решает: начать запись или force_stop (если уже запись).
             if let Some(ref tx) = *HOOK_TX.lock().unwrap() {
-                if was {
-                    let _ = tx.send(AppCommand::StopRecording);
-                } else {
-                    let _ = tx.send(AppCommand::StartRecording);
-                }
+                let _ = tx.send(AppCommand::StartRecording);
             }
         } else if !HOOK_REC.load(Ordering::SeqCst) {
             // Hold-режим: Insert зажат → запись

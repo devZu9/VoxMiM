@@ -1,11 +1,16 @@
+use chrono::Local;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 
 use crate::dlog;
+
+pub static KEEP_WAV: AtomicBool = AtomicBool::new(false);
+pub fn set_keep_wav_global(keep: bool) { KEEP_WAV.store(keep, Ordering::SeqCst); }
 
 const SERVER_PORT: u16 = 8178;
 
@@ -34,7 +39,7 @@ fn cli_exe() -> PathBuf {
     bins.join("whisper-cli.exe")
 }
 
-fn write_wav(path: &Path, samples: &[f32], input_rate: u32) -> Result<(), String> {
+pub(crate) fn write_wav(path: &Path, samples: &[f32], input_rate: u32) -> Result<(), String> {
     let pcm = resample_to_16khz(samples, input_rate);
     let pcm16: Vec<u8> = pcm.iter()
         .flat_map(|&s| ((s.clamp(-1.0, 1.0) * 32767.0) as i16).to_le_bytes())
@@ -110,6 +115,24 @@ fn parse_http_body(resp: &str) -> &str {
     else { resp }
 }
 
+fn wavs_dir() -> PathBuf {
+    let dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|p| p.join("wavs")))
+        .unwrap_or_else(|| PathBuf::from("wavs"));
+    let _ = std::fs::create_dir_all(&dir);
+    dir
+}
+
+fn wav_path() -> PathBuf {
+    if KEEP_WAV.load(Ordering::SeqCst) {
+        let ts = Local::now().format("%Y-%m-%d_%H-%M-%S%.3f");
+        wavs_dir().join(format!("voxmim_{ts}.wav"))
+    } else {
+        wavs_dir().join("voxmim_temp.wav")
+    }
+}
+
 fn capture_stderr(child: &mut Child) -> String {
     if let Some(ref mut stderr) = child.stderr {
         let mut buf = String::new();
@@ -138,18 +161,17 @@ pub struct WhisperEngine {
     language: String,
     input_rate: u32,
     mode: EngineMode,
-    wav_path: PathBuf,
     server: Mutex<Option<Child>>,
 }
 
 impl WhisperEngine {
     pub fn new(_bins_path: &str) -> Self {
+        let _ = std::fs::create_dir_all(&wavs_dir());
         Self {
             model_path: String::new(),
             language: "ru".to_string(),
             input_rate: 48000,
             mode: EngineMode::OneShot,
-            wav_path: std::env::temp_dir().join("voxmim_request.wav"),
             server: Mutex::new(None),
         }
     }
@@ -192,18 +214,19 @@ impl WhisperEngine {
             .collect();
         let h = wav_header(pcm16.len() as u32, 16000);
         let wav: Vec<u8> = h.into_iter().chain(pcm16).collect();
-        let wav_path = std::env::temp_dir().join(format!("voxmim_{}.wav", std::process::id()));
-        std::fs::write(&wav_path, &wav).map_err(|e| format!("WAV: {e}"))?;
+        let path = wav_path();
+        std::fs::write(&path, &wav).map_err(|e| format!("WAV: {e}"))?;
+        dlog!("WAV: {}", path.display());
 
         let bins = bins_dir();
         let output = Command::new(&exe)
-            .args(["-m", &self.model_path, "-f", wav_path.to_str().unwrap()])
+            .args(["-m", &self.model_path, "-f", path.to_str().unwrap()])
             .args(["--language", &self.language, "--no-timestamps"])
             .stdout(Stdio::piped()).stderr(Stdio::null())
             .current_dir(&bins)
             .output().map_err(|e| format!("CLI: {e}"))?;
 
-        let _ = std::fs::remove_file(&wav_path);
+        if !KEEP_WAV.load(Ordering::SeqCst) { let _ = std::fs::remove_file(&path); }
         if !output.status.success() { return Err(format!("CLI код {}", output.status)); }
         let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
         Ok(text)
@@ -215,9 +238,11 @@ impl WhisperEngine {
         if !exe.exists() { return Err("whisper-server.exe не найден".to_string()); }
 
         self.ensure_server(&exe)?;
-        write_wav(&self.wav_path, samples, self.input_rate)?;
+        let path = wav_path();
+        write_wav(&path, samples, self.input_rate)?;
+        dlog!("WAV: {}", path.display());
 
-        let file_data = std::fs::read(&self.wav_path).map_err(|e| format!("Read: {e}"))?;
+        let file_data = std::fs::read(&path).map_err(|e| format!("Read: {e}"))?;
         let multipart = build_multipart(&file_data, "audio.wav", &self.language);
         let ct = "multipart/form-data; boundary=----VoxMiMFormBoundary".to_string();
         let resp = http_post("/inference", &ct, &multipart)?;
@@ -226,6 +251,7 @@ impl WhisperEngine {
             let body = parse_http_body(&resp).trim().to_string();
             dlog!("Server: HTTP error — {body}");
             *self.server.lock().unwrap() = None;
+            if !KEEP_WAV.load(Ordering::SeqCst) { let _ = std::fs::remove_file(&path); }
             return Err(format!("Server error: {body}"));
         }
 
@@ -234,7 +260,7 @@ impl WhisperEngine {
             .ok().and_then(|j| j["text"].as_str().map(|s| s.replace('\n', "").trim().to_string()))
             .unwrap_or_default();
 
-        let _ = std::fs::remove_file(&self.wav_path);
+        if !KEEP_WAV.load(Ordering::SeqCst) { let _ = std::fs::remove_file(&path); }
         Ok(text)
     }
 

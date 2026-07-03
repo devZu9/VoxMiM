@@ -32,19 +32,20 @@ impl VadDetector {
             return VadEvent::Silence;
         }
 
-        let energy = samples.iter().map(|s| s * s).sum::<f32>() / samples.len() as f32;
+        let rms = (samples.iter().map(|s| s * s).sum::<f32>() / samples.len() as f32).sqrt();
 
         let threshold = match self.aggressiveness {
-            0 => 0.01,
-            1 => 0.005,
-            2 => 0.002,
-            _ => 0.001,
+            0 => 0.05,
+            1 => 0.03,
+            2 => 0.015,
+            _ => 0.008,
         };
 
-        if energy > threshold {
+        if rms > threshold {
             if !self.in_speech {
                 self.in_speech = true;
                 self.silence_frames = 0;
+                log::info!("[VAD] SpeechStart (rms={rms:.4})");
                 return VadEvent::SpeechStart;
             }
             self.silence_frames = 0;
@@ -55,6 +56,7 @@ impl VadDetector {
                 if self.silence_frames >= self.silence_duration_frames {
                     self.in_speech = false;
                     self.silence_frames = 0;
+                    log::info!("[VAD] Silence (rms={rms:.4}, frame_count={})", self.silence_duration_frames);
                     return VadEvent::Silence;
                 }
                 VadEvent::Speech
@@ -88,7 +90,7 @@ mod tests {
     #[test]
     fn test_speech_start() {
         let mut vad = VadDetector::new(1, 0.5, 16000);
-        let loud = vec![0.1f32; 1600];
+        let loud = vec![0.1f32; 1600]; // RMS=0.1, threshold aggr=1 => 0.03
         assert_eq!(vad.process_chunk(&loud), VadEvent::SpeechStart);
     }
 }

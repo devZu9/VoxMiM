@@ -57,6 +57,7 @@
   "settings.show_result": "Show result",
   "settings.log_enable": "Logging",
   "settings.log_dir": "Log directory:",
+  "settings.keep_wav": "Keep WAV files",
   "dialog.add_word.title": "Add Word",
   "dialog.add_word.label_wrong": "As recognized:",
   "dialog.add_word.label_correct": "Correct spelling:",

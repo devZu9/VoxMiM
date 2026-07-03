@@ -34,6 +34,7 @@ enum Msg {
     ToggleTrail,
     SetLang(usize),
     ToggleDark,
+    ToggleKeepWav,
     Debug,
     Close,
 }
@@ -66,6 +67,7 @@ struct SettingsApp {
     log_dir: String,
     trailing_space: bool,
     cur_lang: usize,
+    keep_wav: bool,
     locale: HashMap<String, String>,
 }
 
@@ -323,6 +325,7 @@ fn set_from_value(app: &mut SettingsApp, cfg: &serde_json::Value) {
     app.log_enable = cfg.get("log_enabled").and_then(|v| v.as_bool()).unwrap_or(false);
     app.log_dir = cfg.get("log_dir").and_then(|v| v.as_str()).map(|s| s.to_string()).unwrap_or_default();
     app.dark_mode = cfg.get("dark_mode").and_then(|v| v.as_bool()).unwrap_or(false);
+    app.keep_wav = cfg.get("keep_wav").and_then(|v| v.as_bool()).unwrap_or(false);
     app.cur_lang = if cfg.get("language").and_then(|v| v.as_str()).unwrap_or("ru") == "en" { 1 } else { 0 };
     app.cmd_max_words = cfg.get("command_max_words").and_then(|v| v.as_i64()).unwrap_or(3).to_string();
     app.locale = SettingsApp::load_locale(if app.cur_lang == 1 { "en" } else { "ru" });
@@ -373,6 +376,7 @@ fn save_from_ui(app: &SettingsApp, cfg: &mut serde_json::Value) {
     set(cfg, &["show_result"], serde_json::json!(app.show_result));
     set(cfg, &["log_enabled"], serde_json::json!(app.log_enable));
     set(cfg, &["dark_mode"], serde_json::json!(app.dark_mode));
+    set(cfg, &["keep_wav"], serde_json::json!(app.keep_wav));
     set(cfg, &["language"], serde_json::json!(if app.cur_lang == 1 { "en" } else { "ru" }));
     if let Ok(n) = app.cmd_max_words.trim().parse::<u32>() {
         set(cfg, &["command_max_words"], serde_json::json!(n));
@@ -437,6 +441,7 @@ impl App for SettingsApp {
                 self.apply();
             }
             Msg::ToggleDark => { self.dark_mode = !self.dark_mode; self.apply(); }
+            Msg::ToggleKeepWav => { self.keep_wav = !self.keep_wav; self.apply(); }
             Msg::Debug => send_pipe_message(b"debug"),
             Msg::Close => std::process::exit(0),
         }
@@ -578,6 +583,7 @@ impl SettingsApp {
             text(self.t("settings.log_dir")),
             text_input(&self.log_dir).into(),
             checkbox(self.trailing_space).label(self.t("settings.trailing_space")).on_toggle(Msg::ToggleTrail).into(),
+            checkbox(self.keep_wav).label(self.t("settings.keep_wav")).on_toggle(Msg::ToggleKeepWav).into(),
             checkbox(self.dark_mode).label(self.t("settings.dark_mode")).on_toggle(Msg::ToggleDark).into(),
             divider(),
             button(self.t("settings.debug_test")).on_click(Msg::Debug).into(),
@@ -615,7 +621,7 @@ fn main() {
         fix_repetitions: true, fix_punctuation: true, cmd_max_words: "3".into(),
         math_mode: false, noise_filter: true, warmup: true, show_result: false,
         log_enable: false, log_dir: String::new(), trailing_space: false,
-        cur_lang: 0, locale: HashMap::new(),
+        keep_wav: false, cur_lang: 0, locale: HashMap::new(),
     };
     fenestra::run(app, opts);
 }

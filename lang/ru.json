@@ -57,6 +57,7 @@
   "settings.show_result": "Показывать результат",
   "settings.log_enable": "Логирование",
   "settings.log_dir": "Папка логов:",
+  "settings.keep_wav": "Сохранять WAV-файлы",
   "dialog.add_word.title": "Добавить слово",
   "dialog.add_word.label_wrong": "Как распознано:",
   "dialog.add_word.label_correct": "Правильный вариант:",
