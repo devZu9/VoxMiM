@@ -91,7 +91,11 @@ pub struct VadConfig {
     pub aggressiveness: u32,
     pub silence_duration_secs: f32,
     pub accept_short_speech: bool,
+    #[serde(default = "default_start_timeout")]
+    pub start_timeout_secs: f32,
 }
+
+fn default_start_timeout() -> f32 { 2.0 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TextFixConfig {
@@ -137,6 +141,7 @@ impl Default for Config {
                 aggressiveness: 1,
                 silence_duration_secs: 0.8,
                 accept_short_speech: true,
+                start_timeout_secs: 2.0,
             },
             text_fix: TextFixConfig {
                 fix_hallucinations: true,

@@ -37,6 +37,7 @@
   "settings.vad_enable": "Включить автостоп",
   "settings.vad_aggressiveness": "Агрессивность:",
   "settings.vad_timeout": "Таймаут тишины:",
+  "settings.vad_start_timeout": "Таймаут ожидания речи:",
   "settings.seconds": "сек",
   "settings.engine_section": "РЕЖИМ ТРАНСКРАЙБЕРА",
   "settings.detector_section": "РЕЖИМ ДЕТЕКТОРА",

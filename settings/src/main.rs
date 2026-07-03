@@ -20,6 +20,7 @@ enum Msg {
     ToggleVad,
     SetVadAggr(usize),
     SetVadTimeout(String),
+    SetVadStartTimeout(String),
     ToggleHall,
     ToggleUserDict,
     ToggleRep,
@@ -51,6 +52,7 @@ struct SettingsApp {
     vad_enable: bool,
     vad_aggr: usize,
     vad_timeout: String,
+    vad_start_timeout: String,
     fix_hallucinations: bool,
     fix_user_dict: bool,
     fix_repetitions: bool,
@@ -171,6 +173,9 @@ fn scan_models(dir: &str) -> Vec<String> {
     models
 }
 
+// TODO: remove_window_caption с EnumWindows + задержка — костыль.
+// Нужно: сделать caption невидимым при создании окна (через Fenestra или SetWindowLong до ShowWindow),
+// чтобы не было мелькания заголовка. Или использовать кастомную немаскированную область перетаскивания (HTCAPTION).
 fn remove_window_caption() {
     unsafe extern "system" {
         fn EnumWindows(lpEnumFunc: unsafe extern "system" fn(isize, isize) -> i32, lParam: isize) -> i32;
@@ -303,6 +308,7 @@ fn set_from_value(app: &mut SettingsApp, cfg: &serde_json::Value) {
     app.vad_enable = cfg.get("vad").and_then(|v| v.get("enabled")).and_then(|v| v.as_bool()).unwrap_or(false);
     app.vad_aggr = cfg.get("vad").and_then(|v| v.get("aggressiveness")).and_then(|v| v.as_i64()).unwrap_or(1) as usize;
     app.vad_timeout = cfg.get("vad").and_then(|v| v.get("silence_duration_secs")).and_then(|v| v.as_f64()).map_or("0.8".into(), |v| format!("{:.1}", v));
+    app.vad_start_timeout = cfg.get("vad").and_then(|v| v.get("start_timeout_secs")).and_then(|v| v.as_f64()).map_or("2.0".into(), |v| format!("{:.1}", v));
     if let Some(tf) = cfg.get("text_fix") {
         app.trailing_space = tf.get("trailing_space").and_then(|v| v.as_bool()).unwrap_or(false);
         app.fix_hallucinations = tf.get("fix_hallucinations").and_then(|v| v.as_bool()).unwrap_or(true);
@@ -352,6 +358,9 @@ fn save_from_ui(app: &SettingsApp, cfg: &mut serde_json::Value) {
     set(cfg, &["vad", "aggressiveness"], serde_json::json!(app.vad_aggr));
     if let Ok(secs) = app.vad_timeout.trim().parse::<f32>() {
         set(cfg, &["vad", "silence_duration_secs"], serde_json::json!(secs));
+    }
+    if let Ok(secs) = app.vad_start_timeout.trim().parse::<f32>() {
+        set(cfg, &["vad", "start_timeout_secs"], serde_json::json!(secs));
     }
     set(cfg, &["text_fix", "trailing_space"], serde_json::json!(app.trailing_space));
     set(cfg, &["text_fix", "fix_hallucinations"], serde_json::json!(app.fix_hallucinations));
@@ -410,6 +419,7 @@ impl App for SettingsApp {
             Msg::ToggleVad => { self.vad_enable = !self.vad_enable; self.apply(); }
             Msg::SetVadAggr(i) => { self.vad_aggr = i; self.apply(); }
             Msg::SetVadTimeout(s) => self.vad_timeout = s,
+            Msg::SetVadStartTimeout(s) => self.vad_start_timeout = s,
             Msg::ToggleHall => { self.fix_hallucinations = !self.fix_hallucinations; self.apply(); }
             Msg::ToggleUserDict => { self.fix_user_dict = !self.fix_user_dict; self.apply(); }
             Msg::ToggleRep => { self.fix_repetitions = !self.fix_repetitions; self.apply(); }
@@ -436,9 +446,10 @@ impl App for SettingsApp {
         let mut c: Vec<Element<Msg>> = Vec::new();
 
         // Custom title bar with close button
+        let ver = env!("CARGO_PKG_VERSION");
         c.push(
             row().gap(SP2).items_center().children([
-                text("VoxMiM — Settings").size(TextSize::Lg),
+                text(format!("VoxMiM — Settings v{ver}")).size(TextSize::Lg),
                 spacer(),
                 button("×").on_click(Msg::Close).into(),
             ])
@@ -534,6 +545,11 @@ impl SettingsApp {
                 text_input(&self.vad_timeout).width(80.0).on_input(|s| Msg::SetVadTimeout(s)).into(),
                 text(self.t("settings.seconds")),
             ]),
+            row().gap(SP2).children([
+                text(self.t("settings.vad_start_timeout")),
+                text_input(&self.vad_start_timeout).width(80.0).on_input(|s| Msg::SetVadStartTimeout(s)).into(),
+                text(self.t("settings.seconds")),
+            ]),
             spacer(),
         ])
     }
@@ -585,7 +601,8 @@ fn main() {
 
     install_topmost_hook();
 
-    let opts = WindowOptions::titled("VoxMiM — Settings")
+    let ver = env!("CARGO_PKG_VERSION");
+    let opts = WindowOptions::titled(&format!("VoxMiM — Settings v{ver}"))
         .with_size(520.0, 620.0)
         .with_resizable(false);
 
@@ -594,7 +611,7 @@ fn main() {
         use_gpu: true, model_dir: String::new(), models: Vec::new(),
         transcriber_model_idx: 0, detector_model_idx: 0,
         wake_enable: false, vad_enable: false, vad_aggr: 1,
-        vad_timeout: "0.8".into(), fix_hallucinations: true, fix_user_dict: true,
+        vad_timeout: "0.8".into(), vad_start_timeout: "2.0".into(), fix_hallucinations: true, fix_user_dict: true,
         fix_repetitions: true, fix_punctuation: true, cmd_max_words: "3".into(),
         math_mode: false, noise_filter: true, warmup: true, show_result: false,
         log_enable: false, log_dir: String::new(), trailing_space: false,

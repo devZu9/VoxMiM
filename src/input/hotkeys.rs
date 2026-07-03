@@ -43,6 +43,12 @@ static HOOK_REC: AtomicBool = AtomicBool::new(false);
 static HOOK_TX: Mutex<Option<Sender<AppCommand>>> = Mutex::new(None);
 #[cfg(target_os = "windows")]
 static VAD_ENABLED: AtomicBool = AtomicBool::new(false);
+static VAD_KEY_LOCK: AtomicBool = AtomicBool::new(false);
+
+pub fn reset_recording_state() {
+    HOOK_REC.store(false, Ordering::SeqCst);
+    VAD_KEY_LOCK.store(false, Ordering::SeqCst);
+}
 
 pub fn set_vad_enabled(enabled: bool) {
     VAD_ENABLED.store(enabled, Ordering::SeqCst);
@@ -190,6 +196,10 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: usize, lparam: isize) -> 
         }
 
         if vad {
+            if VAD_KEY_LOCK.load(Ordering::SeqCst) {
+                return result; // автоповтор Insert — игнорируем
+            }
+            VAD_KEY_LOCK.store(true, Ordering::SeqCst);
             // Tap-режим: Insert переключает запись
             let was = HOOK_REC.fetch_xor(true, Ordering::SeqCst);
             if let Some(ref tx) = *HOOK_TX.lock().unwrap() {
@@ -206,9 +216,10 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: usize, lparam: isize) -> 
                 let _ = tx.send(AppCommand::StartRecording);
             }
         }
+    } else if !is_down && vad {
+        VAD_KEY_LOCK.store(false, Ordering::SeqCst);
     } else if !is_down && HOOK_REC.load(Ordering::SeqCst) && !vad {
         // Hold-режим: отпустили Insert → стоп
-        // При VAD отпускание не останавливает — автостоп сам
         HOOK_REC.store(false, Ordering::SeqCst);
         if let Some(ref tx) = *HOOK_TX.lock().unwrap() {
             let _ = tx.send(AppCommand::StopRecording);

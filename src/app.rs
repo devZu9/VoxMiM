@@ -220,6 +220,7 @@ impl App {
             sample_rate,
             config.vad.aggressiveness,
             config.vad.silence_duration_secs,
+            config.vad.start_timeout_secs,
         );
 
         // Whisper worker: транскрибация PTT
@@ -482,10 +483,12 @@ impl App {
         if self.state != AppState::Idle { return; }
         self.state = AppState::Recording;
         self.recording.store(true, Ordering::SeqCst);
+        let _ = self.audio_buf.lock().unwrap().clear();
         log::info!("▶ Запись началась");
     }
 
     fn force_stop(&mut self) {
+        crate::input::hotkeys::reset_recording_state();
         self.state = AppState::Processing;
         self.recording.store(false, Ordering::SeqCst);
         let samples = {
@@ -500,6 +503,7 @@ impl App {
     }
 
     fn on_stop(&mut self) {
+        crate::input::hotkeys::reset_recording_state();
         if self.state != AppState::Recording { return; }
         self.state = AppState::Processing;
         self.recording.store(false, Ordering::SeqCst);

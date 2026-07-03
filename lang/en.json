@@ -37,6 +37,7 @@
   "settings.vad_enable": "Enable auto-stop",
   "settings.vad_aggressiveness": "Aggressiveness:",
   "settings.vad_timeout": "Silence timeout:",
+  "settings.vad_start_timeout": "Speech start timeout:",
   "settings.seconds": "sec",
   "settings.engine_section": "TRANSCRIBER MODE",
   "settings.detector_section": "DETECTOR MODE",
