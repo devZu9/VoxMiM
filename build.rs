@@ -3,12 +3,6 @@ use std::fs;
 use std::path::Path;
 
 fn main() {
-    // Slint UI
-    let slint_path = std::path::Path::new("src/ui/settings.slint");
-    if slint_path.exists() {
-        slint_build::compile(slint_path).unwrap();
-    }
-
     #[cfg(target_os = "windows")]
     {
         let _ = embed_resource::compile("resource/resource.rc", embed_resource::NONE);

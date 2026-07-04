@@ -89,9 +89,6 @@ impl App {
                 .ok();
         }
 
-        // Настройки — persistent EventLoop (всегда живёт, окно показывается по сигналу)
-        crate::ui::settings::init(config.clone(), cmd_tx.clone());
-
         let mut executor = CommandExecutor::new();
         if let Some(ref path) = config.commands_path {
             executor.load_commands(path);
@@ -415,7 +412,6 @@ impl App {
             }
             AppCommand::EditUserDict => { self.on_edit_user_dict(); true }
             AppCommand::Quit => {
-                crate::ui::settings::request_quit();
                 crate::ui::tray::request_exit();
                 false
             }
@@ -447,9 +443,6 @@ impl App {
                 }
                 Err(e) => log::error!("Не удалось запустить настройки: {e}"),
             }
-        } else {
-            log::warn!("voxmim-settings.exe не найден, использую встроенное окно");
-            crate::ui::settings::show();
         }
     }
 

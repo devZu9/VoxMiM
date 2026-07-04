@@ -7,6 +7,13 @@
 Формат — [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 проект следует [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.5] — 2026-07-04
+
+### Удалено
+
+- **Мёртвый код Slint** — удалены `src/ui/settings.rs` (Slint-заглушка), `src/ui/settings.slint`. Убраны зависимости `slint` и `slint-build` из `Cargo.toml`. Почищен `build.rs` (Slint compile), `app.rs` (3 обращения к мёртвому модулю), `ui/mod.rs`.
+- **Бинарный размер voxmim.exe** — debug-сборка уменьшилась с ~35 МБ до ~11 МБ.
+
 ## [0.7.4] — 2026-07-04
 
 ### Исправлено
