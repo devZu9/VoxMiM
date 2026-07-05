@@ -189,7 +189,7 @@ impl WhisperEngine {
         let path = path.as_ref();
         if !path.exists() { return Err(format!("Модель не найдена: {}", path.display())); }
         self.model_path = path.to_string_lossy().to_string();
-        log::info!("Engine: модель: {}", path.display());
+        log::debug!("Engine: модель: {}", path.display());
         Ok(())
     }
 

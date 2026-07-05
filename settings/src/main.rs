@@ -18,7 +18,10 @@ enum Msg {
     SelectDetectorModel(usize),
     ToggleWake,
     ToggleVad,
-    SetVadAggr(usize),
+    VadThresholdUp,
+    VadThresholdDown,
+    VadThresholdSet(String),
+    VadThresholdReset,
     VadTimeoutUp,
     VadTimeoutDown,
     VadTimeoutSet(String),
@@ -40,6 +43,7 @@ enum Msg {
     ToggleDark,
     ToggleKeepWav,
     ToggleShowConsole,
+    ReloadConfig,
     Debug,
     Close,
 }
@@ -56,7 +60,7 @@ struct SettingsApp {
     detector_model_idx: usize,
     wake_enable: bool,
     vad_enable: bool,
-    vad_aggr: usize,
+    vad_threshold: String,
     vad_timeout: String,
     vad_start_timeout: String,
     fix_hallucinations: bool,
@@ -77,6 +81,8 @@ struct SettingsApp {
     locale: HashMap<String, String>,
     window_x: i32,
     window_y: i32,
+    proxy: Option<Proxy<Msg>>,
+    last_config_mtime: u64,
 }
 
 impl SettingsApp {
@@ -310,13 +316,22 @@ fn save_config(cfg: &serde_json::Value) {
     }
 }
 
+fn get_config_mtime() -> u64 {
+    std::fs::metadata(config_path())
+        .ok()
+        .and_then(|m| m.modified().ok())
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
 fn set_from_value(app: &mut SettingsApp, cfg: &serde_json::Value) {
     app.engine_server = cfg.get("engine_mode").and_then(|v| v.as_str()).map_or(false, |s| s == "server");
     app.det_server = cfg.get("detector_mode").and_then(|v| v.as_str()).map_or(false, |s| s == "server");
     app.use_gpu = cfg.get("use_gpu").and_then(|v| v.as_bool()).unwrap_or(true);
     app.wake_enable = cfg.get("wake_mode").and_then(|v| v.as_bool()).unwrap_or(false);
     app.vad_enable = cfg.get("vad").and_then(|v| v.get("enabled")).and_then(|v| v.as_bool()).unwrap_or(false);
-    app.vad_aggr = cfg.get("vad").and_then(|v| v.get("aggressiveness")).and_then(|v| v.as_i64()).unwrap_or(1) as usize;
+    app.vad_threshold = cfg.get("vad").and_then(|v| v.get("threshold")).and_then(|v| v.as_f64()).map_or("0.008".into(), |v| format!("{:.3}", v));
     app.vad_timeout = cfg.get("vad").and_then(|v| v.get("silence_duration_secs")).and_then(|v| v.as_f64()).map_or("1.5".into(), |v| format!("{:.1}", v));
     app.vad_start_timeout = cfg.get("vad").and_then(|v| v.get("start_timeout_secs")).and_then(|v| v.as_f64()).map_or("2.0".into(), |v| format!("{:.1}", v));
     if let Some(tf) = cfg.get("text_fix") {
@@ -370,7 +385,13 @@ fn save_from_ui(app: &SettingsApp, cfg: &mut serde_json::Value) {
     set(cfg, &["use_gpu"], serde_json::json!(app.use_gpu));
     set(cfg, &["wake_mode"], serde_json::json!(app.wake_enable));
     set(cfg, &["vad", "enabled"], serde_json::json!(app.vad_enable));
-    set(cfg, &["vad", "aggressiveness"], serde_json::json!(app.vad_aggr));
+    if let Ok(val) = app.vad_threshold.trim().parse::<f64>() {
+        set(cfg, &["vad", "threshold"], serde_json::json!(val));
+    }
+    // Удаляем старое поле aggressiveness, если осталось
+    if let Some(vad) = cfg.get_mut("vad").and_then(|v| v.as_object_mut()) {
+        vad.remove("aggressiveness");
+    }
     if let Ok(secs) = app.vad_timeout.trim().parse::<f64>() {
         set(cfg, &["vad", "silence_duration_secs"], serde_json::json!(secs));
     }
@@ -437,7 +458,27 @@ impl App for SettingsApp {
             }
             Msg::ToggleWake => { self.wake_enable = !self.wake_enable; self.apply(); }
             Msg::ToggleVad => { self.vad_enable = !self.vad_enable; self.apply(); }
-            Msg::SetVadAggr(i) => { self.vad_aggr = i; self.apply(); }
+            Msg::VadThresholdUp => {
+                let v: f64 = self.vad_threshold.parse().unwrap_or(0.008);
+                let v = ((v + 0.002) * 1000.0).round() / 1000.0;
+                if v <= 0.05 { self.vad_threshold = format!("{:.3}", v); self.apply(); }
+            }
+            Msg::VadThresholdDown => {
+                let v: f64 = self.vad_threshold.parse().unwrap_or(0.008);
+                let v = ((v - 0.002) * 1000.0).round() / 1000.0;
+                if v >= 0.002 { self.vad_threshold = format!("{:.3}", v); self.apply(); }
+            }
+            Msg::VadThresholdSet(s) => {
+                if let Ok(v) = s.trim().parse::<f64>() {
+                    let v = v.clamp(0.002, 0.05);
+                    self.vad_threshold = format!("{:.3}", v);
+                    self.apply();
+                }
+            }
+            Msg::VadThresholdReset => {
+                self.vad_threshold = "0.008".to_string();
+                self.apply();
+            }
             Msg::VadTimeoutUp => {
                 let v: f64 = self.vad_timeout.parse().unwrap_or(1.5);
                 let v = ((v + 0.1) * 100.0).round() / 100.0;
@@ -491,6 +532,10 @@ impl App for SettingsApp {
             Msg::ToggleDark => { self.dark_mode = !self.dark_mode; self.apply(); }
             Msg::ToggleKeepWav => { self.keep_wav = !self.keep_wav; self.apply(); }
             Msg::ToggleShowConsole => { self.show_console = !self.show_console; self.apply(); }
+            Msg::ReloadConfig => {
+                let new_cfg = load_config();
+                set_from_value(self, &new_cfg);
+            }
             Msg::Debug => send_pipe_message(b"debug"),
             Msg::Close => { self.apply(); std::process::exit(0); }
         }
@@ -531,9 +576,27 @@ impl App for SettingsApp {
         if self.dark_mode { Theme::dark() } else { Theme::light() }
     }
 
-    fn init(&mut self, _proxy: Proxy<Self::Msg>) {
+    fn init(&mut self, proxy: Proxy<Self::Msg>) {
         let cfg = load_config();
         set_from_value(self, &cfg);
+        self.proxy = Some(proxy.clone());
+        self.last_config_mtime = get_config_mtime();
+
+        // Следим за изменениями config.json извне (трей)
+        std::thread::Builder::new()
+            .name("config-watch".into())
+            .spawn(move || {
+                let mut last_mtime = get_config_mtime();
+                loop {
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                    let mtime = get_config_mtime();
+                    if mtime != 0 && mtime != last_mtime {
+                        last_mtime = mtime;
+                        proxy.send(Msg::ReloadConfig);
+                    }
+                }
+            })
+            .ok();
 
         if self.window_x != 0 || self.window_y != 0 {
             unsafe extern "system" {
@@ -637,6 +700,7 @@ impl SettingsApp {
     fn tab_recording(&self) -> Element<Msg> {
         let to = self.vad_timeout.clone();
         let tso = self.vad_start_timeout.clone();
+        let thr = self.vad_threshold.clone();
         let sec = self.t("settings.seconds");
 
         // Собираем каждый stepper как Element до вложения
@@ -661,12 +725,24 @@ impl SettingsApp {
             icon_button(fenestra::text("▼")).size(ControlSize::Xs).variant(ButtonVariant::Ghost).on_click(Msg::VadTimeoutDown).into(),
         ];
 
+        let thr_text: Element<Msg> = text_input(&thr).width(60.0).on_input(Msg::VadThresholdSet).into();
+        let thr_reset: Element<Msg> = icon_button(fenestra::text("↩")).size(ControlSize::Xs).variant(ButtonVariant::Ghost).on_click(Msg::VadThresholdReset).into();
+        let field_thr: Element<Msg> = row().gap(SP1).items_center().children(vec![
+            thr_text,
+            thr_reset,
+        ]);
+        let st_thr: Vec<Element<Msg>> = vec![
+            icon_button(fenestra::text("▲")).size(ControlSize::Xs).variant(ButtonVariant::Ghost).on_click(Msg::VadThresholdUp).into(),
+            field_thr,
+            icon_button(fenestra::text("▼")).size(ControlSize::Xs).variant(ButtonVariant::Ghost).on_click(Msg::VadThresholdDown).into(),
+        ];
+
         col().gap(SP2).p(SP3).children(vec![
             checkbox(self.wake_enable).label(self.t("settings.wake_enable")).on_toggle(Msg::ToggleWake).into(),
             checkbox(self.vad_enable).label(self.t("settings.vad_enable")).on_toggle(Msg::ToggleVad).into(),
             row().gap(SP2).items_center().children([
-                text(self.t("settings.vad_aggressiveness")),
-                select(self.vad_aggr, ["0", "1", "2", "3"]).width(100.0).on_change(Msg::SetVadAggr).into(),
+                text(self.t("settings.vad_sensitivity")),
+                col().gap(SP1).items_center().children(st_thr).into(),
             ]),
             row().gap(SP2).items_center().children([
                 text(self.t("settings.vad_start_timeout")),
@@ -738,13 +814,13 @@ fn main() {
         cur_tab: 0, dark_mode: false, engine_server: false, det_server: false,
         use_gpu: true, model_dir: String::new(), models: Vec::new(),
         transcriber_model_idx: 0, detector_model_idx: 0,
-        wake_enable: false, vad_enable: false, vad_aggr: 1,
+        wake_enable: false, vad_enable: false, vad_threshold: "0.008".into(),
         vad_timeout: "1.5".into(), vad_start_timeout: "2.0".into(), fix_hallucinations: true, fix_user_dict: true,
         fix_repetitions: true, fix_punctuation: true, cmd_max_words: "3".into(),
         math_mode: false, noise_filter: true, warmup: true, show_result: false,
         log_enable: false, log_dir: String::new(), trailing_space: false,
         keep_wav: false, show_console: true, cur_lang: 0, locale: HashMap::new(),
-        window_x: 0, window_y: 0,
+        window_x: 0, window_y: 0, proxy: None, last_config_mtime: 0,
     };
     fenestra::run(app, opts);
 }

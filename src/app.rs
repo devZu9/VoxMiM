@@ -100,17 +100,22 @@ impl App {
         }
 
         // Whisper — два независимых движка (транскрайбер + детектор)
-        let bins_path = match download::ensure_whisper_bins(config.whisper_bins_path.as_deref()) {
-            Ok(p) => {
-                if config.whisper_bins_path.as_deref() != Some(&p) {
-                    config.whisper_bins_path = Some(p.clone());
-                    let _ = config.save();
+        let bins_path = if config.engine_mode == "server" && config.detector_mode == "server" {
+            // В server-режиме бинарник не нужен — whisper-server запускают движки сами
+            config.whisper_bins_path.clone().unwrap_or_default()
+        } else {
+            match download::ensure_whisper_bins(config.whisper_bins_path.as_deref()) {
+                Ok(p) => {
+                    if config.whisper_bins_path.as_deref() != Some(&p) {
+                        config.whisper_bins_path = Some(p.clone());
+                        let _ = config.save();
+                    }
+                    p
                 }
-                p
-            }
-            Err(e) => {
-                log::error!("Whisper binaries: {e}");
-                String::new()
+                Err(e) => {
+                    log::error!("Whisper binaries: {e}");
+                    String::new()
+                }
             }
         };
 
@@ -216,7 +221,7 @@ impl App {
             audio_buf.clone(),
             vad_enabled.clone(),
             sample_rate,
-            config.vad.aggressiveness,
+            config.vad.threshold,
             config.vad.silence_duration_secs,
             config.vad.start_timeout_secs,
         );
@@ -601,6 +606,7 @@ impl App {
         self.config = new_cfg;
 
         if self.config.vad.enabled != old.vad.enabled {
+            crate::ui::tray::set_vad_state(self.config.vad.enabled);
             self.vad_enabled.store(self.config.vad.enabled, Ordering::SeqCst);
             crate::input::hotkeys::set_vad_enabled(self.config.vad.enabled);
         }
@@ -620,13 +626,14 @@ impl App {
             changes.push(format!("use_gpu={}→{}", old.use_gpu, self.config.use_gpu));
         }
         if old.wake_mode != self.config.wake_mode {
+            crate::ui::tray::set_wake_state(self.config.wake_mode);
             changes.push(format!("wake_mode={}→{}", old.wake_mode, self.config.wake_mode));
         }
         if old.vad.enabled != self.config.vad.enabled {
             changes.push(format!("vad.enabled={}→{}", old.vad.enabled, self.config.vad.enabled));
         }
-        if old.vad.aggressiveness != self.config.vad.aggressiveness {
-            changes.push(format!("vad.aggressiveness={}→{}", old.vad.aggressiveness, self.config.vad.aggressiveness));
+        if (old.vad.threshold - self.config.vad.threshold).abs() > f32::EPSILON {
+            changes.push(format!("vad.threshold={:.3}→{:.3}", old.vad.threshold, self.config.vad.threshold));
         }
         if old.vad.silence_duration_secs != self.config.vad.silence_duration_secs {
             changes.push(format!("vad.timeout={:.1}→{:.1}", old.vad.silence_duration_secs, self.config.vad.silence_duration_secs));

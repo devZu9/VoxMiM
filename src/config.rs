@@ -100,13 +100,15 @@ pub enum TriggerButton {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VadConfig {
     pub enabled: bool,
-    pub aggressiveness: u32,
+    #[serde(default = "default_vad_threshold")]
+    pub threshold: f32,
     pub silence_duration_secs: f32,
     pub accept_short_speech: bool,
     #[serde(default = "default_start_timeout")]
     pub start_timeout_secs: f32,
 }
 
+fn default_vad_threshold() -> f32 { 0.008 }
 fn default_start_timeout() -> f32 { 2.0 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -150,7 +152,7 @@ impl Default for Config {
             },
             vad: VadConfig {
                 enabled: false,
-                aggressiveness: 1,
+                threshold: 0.008,
                 silence_duration_secs: 1.5,
                 accept_short_speech: true,
                 start_timeout_secs: 2.0,
@@ -212,10 +214,14 @@ impl Config {
         let mut cfg = 'load: {
             if config_path.exists() {
                 match std::fs::read_to_string(&config_path) {
-                    Ok(content) => match serde_json::from_str(&content) {
-                        Ok(c) => break 'load c,
-                        Err(e) => log::warn!("Ошибка парсинга config.json: {e}"),
-                    },
+                    Ok(content) => {
+                        // Миграция: aggressiveness → threshold
+                        let content = Self::migrate_vad(&content);
+                        match serde_json::from_str(&content) {
+                            Ok(c) => break 'load c,
+                            Err(e) => log::warn!("Ошибка парсинга config.json: {e}"),
+                        }
+                    }
                     Err(e) => log::warn!("Не удалось прочитать config.json: {e}"),
                 }
             }
@@ -266,6 +272,30 @@ impl Config {
         }
 
         cfg
+    }
+
+    fn migrate_vad(content: &str) -> String {
+        let mut raw: serde_json::Value = match serde_json::from_str(content) {
+            Ok(v) => v,
+            Err(_) => return content.to_string(),
+        };
+        if let Some(vad) = raw.get_mut("vad") {
+            // Мигрируем только если есть старый aggressiveness И нет нового threshold
+            if vad.get("threshold").is_none() {
+                if let Some(aggr) = vad.get("aggressiveness").and_then(|v| v.as_i64()) {
+                    let threshold = match aggr {
+                        0 => 0.05,
+                        1 => 0.03,
+                        2 => 0.015,
+                        _ => 0.008,
+                    };
+                    let _ = vad.as_object_mut().map(|o| o.remove("aggressiveness"));
+                    vad["threshold"] = serde_json::json!(threshold);
+                    log::info!("Миграция: vad.aggressiveness={aggr} → vad.threshold={threshold}");
+                }
+            }
+        }
+        serde_json::to_string_pretty(&raw).unwrap_or_else(|_| content.to_string())
     }
 
     pub fn save(&self) -> Result<(), Box<dyn std::error::Error>> {

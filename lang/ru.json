@@ -37,7 +37,7 @@
   "settings.apply": "Применить",
   "settings.vad_section": "Автостоп (VAD)",
   "settings.vad_enable": "Режим удержания + автостоп",
-  "settings.vad_aggressiveness": "Агрессивность:",
+  "settings.vad_sensitivity": "Чувствительность микрофона:",
   "settings.vad_timeout": "Остановка при обнаружении тишины:",
   "settings.vad_start_timeout": "Начальное ожидание речи:",
   "settings.seconds": "сек",

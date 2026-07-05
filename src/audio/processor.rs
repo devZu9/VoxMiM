@@ -17,14 +17,14 @@ impl AudioProcessor {
         audio_buf: Arc<Mutex<Vec<f32>>>,
         vad_enabled: Arc<AtomicBool>,
         sample_rate: u32,
-        vad_aggressiveness: u32,
+        vad_threshold: f32,
         vad_silence_secs: f32,
         start_timeout_secs: f32,
     ) {
         std::thread::Builder::new()
             .name("audio-accum".into())
             .spawn(move || {
-                let mut vad = VadDetector::new(vad_aggressiveness, vad_silence_secs, sample_rate);
+                let mut vad = VadDetector::new(vad_threshold, vad_silence_secs, sample_rate);
                 let ring_max = sample_rate as usize;
                 let start_timeout_frames = (start_timeout_secs * sample_rate as f32) as usize;
                 let mut ring_buf: Vec<f32> = Vec::new();

@@ -8,7 +8,7 @@ pub enum VadEvent {
 }
 
 pub struct VadDetector {
-    aggressiveness: u32,
+    threshold: f32,
     silence_duration_frames: usize,
     silence_frames: usize,
     in_speech: bool,
@@ -16,10 +16,10 @@ pub struct VadDetector {
 }
 
 impl VadDetector {
-    pub fn new(aggressiveness: u32, silence_duration_secs: f32, sample_rate: u32) -> Self {
+    pub fn new(threshold: f32, silence_duration_secs: f32, sample_rate: u32) -> Self {
         let silence_duration_frames = (silence_duration_secs * sample_rate as f32) as usize;
         Self {
-            aggressiveness,
+            threshold,
             silence_duration_frames,
             silence_frames: 0,
             in_speech: false,
@@ -34,14 +34,7 @@ impl VadDetector {
 
         let rms = (samples.iter().map(|s| s * s).sum::<f32>() / samples.len() as f32).sqrt();
 
-        let threshold = match self.aggressiveness {
-            0 => 0.05,
-            1 => 0.03,
-            2 => 0.015,
-            _ => 0.008,
-        };
-
-        if rms > threshold {
+        if rms > self.threshold {
             if !self.in_speech {
                 self.in_speech = true;
                 self.silence_frames = 0;
@@ -71,8 +64,8 @@ impl VadDetector {
         self.silence_frames = 0;
     }
 
-    pub fn set_aggressiveness(&mut self, level: u32) {
-        self.aggressiveness = level.clamp(0, 3);
+    pub fn set_threshold(&mut self, threshold: f32) {
+        self.threshold = threshold.clamp(0.002, 0.05);
     }
 }
 
@@ -82,15 +75,15 @@ mod tests {
 
     #[test]
     fn test_silence() {
-        let mut vad = VadDetector::new(1, 0.5, 16000);
+        let mut vad = VadDetector::new(0.008, 0.5, 16000);
         let silent = vec![0.0f32; 1600];
         assert_eq!(vad.process_chunk(&silent), VadEvent::Silence);
     }
 
     #[test]
     fn test_speech_start() {
-        let mut vad = VadDetector::new(1, 0.5, 16000);
-        let loud = vec![0.1f32; 1600]; // RMS=0.1, threshold aggr=1 => 0.03
+        let mut vad = VadDetector::new(0.008, 0.5, 16000);
+        let loud = vec![0.1f32; 1600]; // RMS=0.1 > threshold 0.008 → SpeechStart
         assert_eq!(vad.process_chunk(&loud), VadEvent::SpeechStart);
     }
 }
