@@ -1,6 +1,6 @@
 pub mod aliases;
 pub mod dictionary;
-mod hallucinations;
+pub mod hallucinations;
 mod punctuation;
 mod repetitions;
 mod space_fixer;

@@ -12,6 +12,9 @@ use crate::dlog;
 pub static KEEP_WAV: AtomicBool = AtomicBool::new(false);
 pub fn set_keep_wav_global(keep: bool) { KEEP_WAV.store(keep, Ordering::SeqCst); }
 
+pub static ENGINE_MODE_SERVER: AtomicBool = AtomicBool::new(true);
+pub fn set_engine_mode_server(is_server: bool) { ENGINE_MODE_SERVER.store(is_server, Ordering::SeqCst); }
+
 const SERVER_PORT: u16 = 8178;
 
 fn bins_dir() -> PathBuf {
@@ -160,7 +163,6 @@ pub struct WhisperEngine {
     model_path: String,
     language: String,
     input_rate: u32,
-    mode: EngineMode,
     server: Mutex<Option<Child>>,
 }
 
@@ -171,14 +173,14 @@ impl WhisperEngine {
             model_path: String::new(),
             language: "ru".to_string(),
             input_rate: 48000,
-            mode: EngineMode::OneShot,
             server: Mutex::new(None),
         }
     }
 
     pub fn set_mode(&mut self, mode: EngineMode) {
-        self.mode = mode;
-        if mode != EngineMode::Server {
+        let is_server = mode == EngineMode::Server;
+        crate::stt::engine::ENGINE_MODE_SERVER.store(is_server, Ordering::SeqCst);
+        if !is_server {
             self.stop_server();
         }
     }
@@ -196,9 +198,10 @@ impl WhisperEngine {
     pub fn set_input_rate(&mut self, rate: u32) { self.input_rate = rate; }
 
     pub fn transcribe(&self, samples: &[f32]) -> Result<String, String> {
-        match self.mode {
-            EngineMode::Server => self.transcribe_server(samples),
-            EngineMode::OneShot => self.transcribe_one_shot(samples),
+        if ENGINE_MODE_SERVER.load(Ordering::SeqCst) {
+            self.transcribe_server(samples)
+        } else {
+            self.transcribe_one_shot(samples)
         }
     }
 
@@ -216,7 +219,7 @@ impl WhisperEngine {
         let wav: Vec<u8> = h.into_iter().chain(pcm16).collect();
         let path = wav_path();
         std::fs::write(&path, &wav).map_err(|e| format!("WAV: {e}"))?;
-        dlog!("WAV: {}", path.display());
+        log::info!("WAV: {} (через one-shot CLI)", path.display());
 
         let bins = bins_dir();
         let output = Command::new(&exe)
@@ -240,7 +243,7 @@ impl WhisperEngine {
         self.ensure_server(&exe)?;
         let path = wav_path();
         write_wav(&path, samples, self.input_rate)?;
-        dlog!("WAV: {}", path.display());
+        log::info!("WAV: {} (через server :{})", path.display(), SERVER_PORT);
 
         let file_data = std::fs::read(&path).map_err(|e| format!("Read: {e}"))?;
         let multipart = build_multipart(&file_data, "audio.wav", &self.language);
@@ -329,8 +332,11 @@ impl WhisperEngine {
     }
 
     pub fn detect(&self, samples: &[f32]) -> Result<String, String> {
-        // Детектор всегда one-shot (не стартует сервер)
-        self.transcribe_one_shot(samples)
+        if ENGINE_MODE_SERVER.load(Ordering::SeqCst) {
+            self.transcribe_server(samples)
+        } else {
+            self.transcribe_one_shot(samples)
+        }
     }
 
     pub fn warmup(&self) {

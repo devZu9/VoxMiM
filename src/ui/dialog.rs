@@ -2,6 +2,7 @@ use crate::app::AppCommand;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 static DLG_ACTIVE: AtomicBool = AtomicBool::new(false);
+static DLG_HALL_ACTIVE: AtomicBool = AtomicBool::new(false);
 
 const IDC_EDIT_WRONG: usize = 201;
 const IDC_EDIT_CORRECT: usize = 202;
@@ -204,5 +205,114 @@ pub fn show_add_word_dialog(parent_hwnd: *mut std::ffi::c_void, instance: *mut s
         ShowWindow(hwnd, 5);
 
         // Нет вложенного цикла! Трей-поток сам раздаёт сообщения всем окнам.
+    }
+}
+
+// ── Диалог добавления фразы галлюцинации ────────────────────────────
+
+const IDC_EDIT_HALL: usize = 301;
+const IDC_BTN_ADD_HALL: usize = 302;
+const IDC_BTN_CANCEL_HALL: usize = 303;
+
+unsafe extern "system" fn hall_dlg_proc(
+    hwnd: *mut std::ffi::c_void, msg: u32, wparam: usize, lparam: isize,
+) -> isize {
+    const WM_CREATE: u32 = 0x0001;
+    const WM_CLOSE: u32 = 0x0010;
+    const WM_DESTROY: u32 = 0x0002;
+    const WM_COMMAND: u32 = 0x0111;
+
+    match msg {
+        WM_CREATE => unsafe {
+            let instance = GetModuleHandleW(std::ptr::null());
+            let edit_w = 320i32;
+            let left = 40i32;
+
+            let lbl = crate::lang::t_utf16("dialog.add_hall.label");
+            CreateWindowExW(0, WC_STATIC.as_ptr(), lbl.as_ptr(),
+                0x50000000, left, 20, 300, 20, hwnd, std::ptr::null_mut(), instance, std::ptr::null_mut());
+
+            CreateWindowExW(0x00000200, WC_EDIT.as_ptr(), std::ptr::null(),
+                0x50010080, left, 44, edit_w, 26, hwnd,
+                IDC_EDIT_HALL as *mut std::ffi::c_void, instance, std::ptr::null_mut());
+
+            let add = crate::lang::t_utf16("dialog.add_word.add");
+            CreateWindowExW(0, WC_BUTTON.as_ptr(), add.as_ptr(),
+                0x50010000, left, 100, 100, 30, hwnd,
+                IDC_BTN_ADD_HALL as *mut std::ffi::c_void, instance, std::ptr::null_mut());
+
+            let cancel = crate::lang::t_utf16("dialog.add_word.cancel");
+            CreateWindowExW(0, WC_BUTTON.as_ptr(), cancel.as_ptr(),
+                0x50010000, left + 110, 100, 100, 30, hwnd,
+                IDC_BTN_CANCEL_HALL as *mut std::ffi::c_void, instance, std::ptr::null_mut());
+
+            0
+        }
+        WM_COMMAND => {
+            let id = (wparam & 0xFFFF) as usize;
+            match id {
+                IDC_BTN_ADD_HALL => unsafe {
+                    let edit_h = GetDlgItem(hwnd, IDC_EDIT_HALL as i32);
+                    let text = get_edit_text(edit_h);
+                    if !text.is_empty() {
+                        send_cmd_tx(AppCommand::AddHallEntry { phrase: text });
+                    }
+                    DestroyWindow(hwnd);
+                }
+                IDC_BTN_CANCEL_HALL => unsafe {
+                    DestroyWindow(hwnd);
+                }
+                _ => {}
+            }
+            0
+        }
+        WM_CLOSE => unsafe { DestroyWindow(hwnd); 0 }
+        WM_DESTROY => {
+            DLG_HALL_ACTIVE.store(false, Ordering::SeqCst);
+            0
+        }
+        _ => unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) },
+    }
+}
+
+pub fn show_add_hall_dialog(parent_hwnd: *mut std::ffi::c_void, instance: *mut std::ffi::c_void) {
+    if DLG_HALL_ACTIVE.swap(true, Ordering::SeqCst) {
+        return;
+    }
+
+    unsafe {
+        let class_name: Vec<u16> = "VoxMiMAddHallDlg\0".encode_utf16().collect();
+        let wc = WNDCLASSW {
+            style: 0,
+            lpfnWndProc: Some(hall_dlg_proc),
+            cbClsExtra: 0,
+            cbWndExtra: 0,
+            hInstance: instance,
+            hIcon: std::ptr::null_mut(),
+            hCursor: std::ptr::null_mut(),
+            hbrBackground: (5usize + 1) as *mut std::ffi::c_void,
+            lpszMenuName: std::ptr::null(),
+            lpszClassName: class_name.as_ptr(),
+        };
+        RegisterClassW(&wc);
+
+        let w = 400i32;
+        let h = 200i32;
+        let sw = GetSystemMetrics(0);
+        let sh = GetSystemMetrics(1);
+        let x = (sw - w) / 2;
+        let y = (sh - h) / 2;
+
+        let title = crate::lang::t_utf16("dialog.add_hall.title");
+        let hwnd = CreateWindowExW(
+            0, class_name.as_ptr(), title.as_ptr(),
+            0x10CE0000, x, y, w, h,
+            parent_hwnd, std::ptr::null_mut(), instance, std::ptr::null_mut(),
+        );
+        if hwnd.is_null() {
+            DLG_HALL_ACTIVE.store(false, Ordering::SeqCst);
+            return;
+        }
+        ShowWindow(hwnd, 5);
     }
 }

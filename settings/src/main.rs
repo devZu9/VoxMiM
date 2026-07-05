@@ -1,5 +1,5 @@
 use fenestra::prelude::*;
-use fenestra_kit::{checkbox, button, select, text_input, tabs, segmented};
+use fenestra_kit::{checkbox, button, select, text_input, tabs, radio, icon_button, ControlSize, ButtonVariant};
 use fenestra::TextSize;
 use std::collections::HashMap;
 use std::ffi::c_void;
@@ -19,8 +19,12 @@ enum Msg {
     ToggleWake,
     ToggleVad,
     SetVadAggr(usize),
-    SetVadTimeout(String),
-    SetVadStartTimeout(String),
+    VadTimeoutUp,
+    VadTimeoutDown,
+    VadTimeoutSet(String),
+    VadStartTimeoutUp,
+    VadStartTimeoutDown,
+    VadStartTimeoutSet(String),
     ToggleHall,
     ToggleUserDict,
     ToggleRep,
@@ -35,6 +39,7 @@ enum Msg {
     SetLang(usize),
     ToggleDark,
     ToggleKeepWav,
+    ToggleShowConsole,
     Debug,
     Close,
 }
@@ -68,6 +73,7 @@ struct SettingsApp {
     trailing_space: bool,
     cur_lang: usize,
     keep_wav: bool,
+    show_console: bool,
     locale: HashMap<String, String>,
 }
 
@@ -309,7 +315,7 @@ fn set_from_value(app: &mut SettingsApp, cfg: &serde_json::Value) {
     app.wake_enable = cfg.get("wake_mode").and_then(|v| v.as_bool()).unwrap_or(false);
     app.vad_enable = cfg.get("vad").and_then(|v| v.get("enabled")).and_then(|v| v.as_bool()).unwrap_or(false);
     app.vad_aggr = cfg.get("vad").and_then(|v| v.get("aggressiveness")).and_then(|v| v.as_i64()).unwrap_or(1) as usize;
-    app.vad_timeout = cfg.get("vad").and_then(|v| v.get("silence_duration_secs")).and_then(|v| v.as_f64()).map_or("0.8".into(), |v| format!("{:.1}", v));
+    app.vad_timeout = cfg.get("vad").and_then(|v| v.get("silence_duration_secs")).and_then(|v| v.as_f64()).map_or("1.5".into(), |v| format!("{:.1}", v));
     app.vad_start_timeout = cfg.get("vad").and_then(|v| v.get("start_timeout_secs")).and_then(|v| v.as_f64()).map_or("2.0".into(), |v| format!("{:.1}", v));
     if let Some(tf) = cfg.get("text_fix") {
         app.trailing_space = tf.get("trailing_space").and_then(|v| v.as_bool()).unwrap_or(false);
@@ -326,6 +332,7 @@ fn set_from_value(app: &mut SettingsApp, cfg: &serde_json::Value) {
     app.log_dir = cfg.get("log_dir").and_then(|v| v.as_str()).map(|s| s.to_string()).unwrap_or_default();
     app.dark_mode = cfg.get("dark_mode").and_then(|v| v.as_bool()).unwrap_or(false);
     app.keep_wav = cfg.get("keep_wav").and_then(|v| v.as_bool()).unwrap_or(false);
+    app.show_console = cfg.get("show_console_on_start").and_then(|v| v.as_bool()).unwrap_or(true);
     app.cur_lang = if cfg.get("language").and_then(|v| v.as_str()).unwrap_or("ru") == "en" { 1 } else { 0 };
     app.cmd_max_words = cfg.get("command_max_words").and_then(|v| v.as_i64()).unwrap_or(3).to_string();
     app.locale = SettingsApp::load_locale(if app.cur_lang == 1 { "en" } else { "ru" });
@@ -377,6 +384,7 @@ fn save_from_ui(app: &SettingsApp, cfg: &mut serde_json::Value) {
     set(cfg, &["log_enabled"], serde_json::json!(app.log_enable));
     set(cfg, &["dark_mode"], serde_json::json!(app.dark_mode));
     set(cfg, &["keep_wav"], serde_json::json!(app.keep_wav));
+    set(cfg, &["show_console_on_start"], serde_json::json!(app.show_console));
     set(cfg, &["language"], serde_json::json!(if app.cur_lang == 1 { "en" } else { "ru" }));
     if let Ok(n) = app.cmd_max_words.trim().parse::<u32>() {
         set(cfg, &["command_max_words"], serde_json::json!(n));
@@ -422,8 +430,40 @@ impl App for SettingsApp {
             Msg::ToggleWake => { self.wake_enable = !self.wake_enable; self.apply(); }
             Msg::ToggleVad => { self.vad_enable = !self.vad_enable; self.apply(); }
             Msg::SetVadAggr(i) => { self.vad_aggr = i; self.apply(); }
-            Msg::SetVadTimeout(s) => self.vad_timeout = s,
-            Msg::SetVadStartTimeout(s) => self.vad_start_timeout = s,
+            Msg::VadTimeoutUp => {
+                let v: f64 = self.vad_timeout.parse().unwrap_or(1.5);
+                let v = ((v + 0.1) * 100.0).round() / 100.0;
+                if v <= 10.0 { self.vad_timeout = format!("{:.1}", v); self.apply(); }
+            }
+            Msg::VadTimeoutDown => {
+                let v: f64 = self.vad_timeout.parse().unwrap_or(1.5);
+                let v = ((v - 0.1) * 100.0).round() / 100.0;
+                if v >= 0.5 { self.vad_timeout = format!("{:.1}", v); self.apply(); }
+            }
+            Msg::VadTimeoutSet(s) => {
+                if let Ok(v) = s.trim().parse::<f64>() {
+                    let v = v.clamp(0.5, 10.0);
+                    self.vad_timeout = format!("{:.1}", v);
+                    self.apply();
+                }
+            }
+            Msg::VadStartTimeoutUp => {
+                let v: f64 = self.vad_start_timeout.parse().unwrap_or(2.0);
+                let v = ((v + 0.1) * 100.0).round() / 100.0;
+                if v <= 15.0 { self.vad_start_timeout = format!("{:.1}", v); self.apply(); }
+            }
+            Msg::VadStartTimeoutDown => {
+                let v: f64 = self.vad_start_timeout.parse().unwrap_or(2.0);
+                let v = ((v - 0.1) * 100.0).round() / 100.0;
+                if v >= 0.0 { self.vad_start_timeout = format!("{:.1}", v); self.apply(); }
+            }
+            Msg::VadStartTimeoutSet(s) => {
+                if let Ok(v) = s.trim().parse::<f64>() {
+                    let v = v.clamp(0.0, 15.0);
+                    self.vad_start_timeout = format!("{:.1}", v);
+                    self.apply();
+                }
+            }
             Msg::ToggleHall => { self.fix_hallucinations = !self.fix_hallucinations; self.apply(); }
             Msg::ToggleUserDict => { self.fix_user_dict = !self.fix_user_dict; self.apply(); }
             Msg::ToggleRep => { self.fix_repetitions = !self.fix_repetitions; self.apply(); }
@@ -442,8 +482,9 @@ impl App for SettingsApp {
             }
             Msg::ToggleDark => { self.dark_mode = !self.dark_mode; self.apply(); }
             Msg::ToggleKeepWav => { self.keep_wav = !self.keep_wav; self.apply(); }
+            Msg::ToggleShowConsole => { self.show_console = !self.show_console; self.apply(); }
             Msg::Debug => send_pipe_message(b"debug"),
-            Msg::Close => std::process::exit(0),
+            Msg::Close => { self.apply(); std::process::exit(0); }
         }
     }
 
@@ -502,9 +543,8 @@ impl SettingsApp {
         let de = self.det_server;
         col().gap(SP2).p(SP3).children(vec![
             text(self.t("settings.engine_section")).into(),
-            segmented(if en { 1 } else { 0 },
-                [self.t("settings.engine_one_shot"), self.t("settings.engine_server")],
-                |i| Msg::SetEngineMode(i == 1)).into(),
+            radio(!en).label(self.t("settings.engine_one_shot")).on_select(Msg::SetEngineMode(false)).into(),
+            radio(en).label(self.t("settings.engine_server")).on_select(Msg::SetEngineMode(true)).into(),
             row().gap(SP2).children([
                 text(self.t("settings.models_dir")),
                 text_input(&self.model_dir).width(250.0).into(),
@@ -512,13 +552,12 @@ impl SettingsApp {
             ]),
             row().gap(SP2).children([
                 text(self.t("settings.model")),
-                select(self.transcriber_model_idx, model_refs.clone()).width(250.0).on_change(Msg::SelectTranscriberModel).into(),
+                select(self.transcriber_model_idx, model_refs.clone()).width(350.0).on_change(Msg::SelectTranscriberModel).into(),
             ]),
             divider(),
             text(self.t("settings.detector_section")).into(),
-            segmented(if de { 1 } else { 0 },
-                [self.t("settings.engine_one_shot"), self.t("settings.engine_server")],
-                |i| Msg::SetDetMode(i == 1)).into(),
+            radio(!de).label(self.t("settings.engine_one_shot")).on_select(Msg::SetDetMode(false)).into(),
+            radio(de).label(self.t("settings.engine_server")).on_select(Msg::SetDetMode(true)).into(),
             row().gap(SP2).children([
                 text(self.t("settings.models_dir")),
                 text_input(&self.model_dir).width(250.0).into(),
@@ -526,7 +565,7 @@ impl SettingsApp {
             ]),
             row().gap(SP2).children([
                 text(self.t("settings.model")),
-                select(self.detector_model_idx, model_refs).width(250.0).on_change(Msg::SelectDetectorModel).into(),
+                select(self.detector_model_idx, model_refs).width(350.0).on_change(Msg::SelectDetectorModel).into(),
             ]),
             divider(),
             checkbox(self.use_gpu).label(self.t("settings.gpu")).on_toggle(Msg::ToggleGpu).into(),
@@ -538,6 +577,32 @@ impl SettingsApp {
     }
 
     fn tab_recording(&self) -> Element<Msg> {
+        let to = self.vad_timeout.clone();
+        let tso = self.vad_start_timeout.clone();
+        let sec = self.t("settings.seconds");
+
+        // Собираем каждый stepper как Element до вложения
+        let a = text(sec);
+        let b = text(sec);
+        let field_start: Element<Msg> = row().gap(SP1).items_center().children(vec![
+            text_input(&tso).width(60.0).on_input(Msg::VadStartTimeoutSet).into(),
+            a,
+        ]);
+        let field_timeout: Element<Msg> = row().gap(SP1).items_center().children(vec![
+            text_input(&to).width(60.0).on_input(Msg::VadTimeoutSet).into(),
+            b,
+        ]);
+        let st_s: Vec<Element<Msg>> = vec![
+            icon_button(fenestra::text("▲")).size(ControlSize::Xs).variant(ButtonVariant::Ghost).on_click(Msg::VadStartTimeoutUp).into(),
+            field_start,
+            icon_button(fenestra::text("▼")).size(ControlSize::Xs).variant(ButtonVariant::Ghost).on_click(Msg::VadStartTimeoutDown).into(),
+        ];
+        let st_t: Vec<Element<Msg>> = vec![
+            icon_button(fenestra::text("▲")).size(ControlSize::Xs).variant(ButtonVariant::Ghost).on_click(Msg::VadTimeoutUp).into(),
+            field_timeout,
+            icon_button(fenestra::text("▼")).size(ControlSize::Xs).variant(ButtonVariant::Ghost).on_click(Msg::VadTimeoutDown).into(),
+        ];
+
         col().gap(SP2).p(SP3).children(vec![
             checkbox(self.wake_enable).label(self.t("settings.wake_enable")).on_toggle(Msg::ToggleWake).into(),
             checkbox(self.vad_enable).label(self.t("settings.vad_enable")).on_toggle(Msg::ToggleVad).into(),
@@ -545,15 +610,13 @@ impl SettingsApp {
                 text(self.t("settings.vad_aggressiveness")),
                 select(self.vad_aggr, ["0", "1", "2", "3"]).width(100.0).on_change(Msg::SetVadAggr).into(),
             ]),
-            row().gap(SP2).children([
-                text(self.t("settings.vad_timeout")),
-                text_input(&self.vad_timeout).width(80.0).on_input(|s| Msg::SetVadTimeout(s)).into(),
-                text(self.t("settings.seconds")),
-            ]),
-            row().gap(SP2).children([
+            row().gap(SP2).items_center().children([
                 text(self.t("settings.vad_start_timeout")),
-                text_input(&self.vad_start_timeout).width(80.0).on_input(|s| Msg::SetVadStartTimeout(s)).into(),
-                text(self.t("settings.seconds")),
+                col().gap(SP1).items_center().children(st_s).into(),
+            ]),
+            row().gap(SP2).items_center().children([
+                text(self.t("settings.vad_timeout")),
+                col().gap(SP1).items_center().children(st_t).into(),
             ]),
             spacer(),
         ])
@@ -583,6 +646,7 @@ impl SettingsApp {
             text(self.t("settings.log_dir")),
             text_input(&self.log_dir).into(),
             checkbox(self.trailing_space).label(self.t("settings.trailing_space")).on_toggle(Msg::ToggleTrail).into(),
+            checkbox(self.show_console).label(self.t("settings.show_console")).on_toggle(Msg::ToggleShowConsole).into(),
             checkbox(self.keep_wav).label(self.t("settings.keep_wav")).on_toggle(Msg::ToggleKeepWav).into(),
             checkbox(self.dark_mode).label(self.t("settings.dark_mode")).on_toggle(Msg::ToggleDark).into(),
             divider(),
@@ -617,11 +681,11 @@ fn main() {
         use_gpu: true, model_dir: String::new(), models: Vec::new(),
         transcriber_model_idx: 0, detector_model_idx: 0,
         wake_enable: false, vad_enable: false, vad_aggr: 1,
-        vad_timeout: "0.8".into(), vad_start_timeout: "2.0".into(), fix_hallucinations: true, fix_user_dict: true,
+        vad_timeout: "1.5".into(), vad_start_timeout: "2.0".into(), fix_hallucinations: true, fix_user_dict: true,
         fix_repetitions: true, fix_punctuation: true, cmd_max_words: "3".into(),
         math_mode: false, noise_filter: true, warmup: true, show_result: false,
         log_enable: false, log_dir: String::new(), trailing_space: false,
-        keep_wav: false, cur_lang: 0, locale: HashMap::new(),
+        keep_wav: false, show_console: true, cur_lang: 0, locale: HashMap::new(),
     };
     fenestra::run(app, opts);
 }

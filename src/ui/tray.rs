@@ -23,6 +23,8 @@ const CMD_MATH: u32 = 1002;
 const CMD_QUIT: u32 = 1003;
 const CMD_ADD_WORD: u32 = 1005;
 const CMD_EDIT_DICT: u32 = 1006;
+const CMD_ADD_HALL: u32 = 1008;
+const CMD_EDIT_HALL: u32 = 1009;
 
 static TRAY_AUTOSTOP: AtomicBool = AtomicBool::new(false);
 static TRAY_WAKE: AtomicBool = AtomicBool::new(false);
@@ -337,6 +339,12 @@ unsafe extern "system" fn wnd_proc(
                         crate::ui::dialog::show_add_word_dialog(hwnd_parent, instance);
                     }
                     CMD_EDIT_DICT => { let _ = tx.send(AppCommand::EditUserDict); }
+                    CMD_ADD_HALL => {
+                        let hwnd_parent = TRAY_HWND.load(Ordering::SeqCst) as *mut std::ffi::c_void;
+                        let instance = unsafe { GetModuleHandleW(std::ptr::null()) };
+                        crate::ui::dialog::show_add_hall_dialog(hwnd_parent, instance);
+                    }
+                    CMD_EDIT_HALL => { let _ = tx.send(AppCommand::EditHallDict); }
                     CMD_QUIT => { let _ = tx.send(AppCommand::Quit); }
                     _ => {}
                 }
@@ -386,12 +394,21 @@ unsafe fn show_menu(hwnd: *mut std::ffi::c_void) {
 
     unsafe { AppendMenuW(menu, MF_SEPARATOR, 0, std::ptr::null()); }
 
-    // Добавить слово / Редактировать словарь
+    // Пользовательский словарь
     let add_w = lang::t_utf16("tray.menu.add_word");
     unsafe { AppendMenuW(menu, MF_STRING, CMD_ADD_WORD as usize, add_w.as_ptr()); }
 
     let edit_w = lang::t_utf16("tray.menu.edit_dict");
     unsafe { AppendMenuW(menu, MF_STRING, CMD_EDIT_DICT as usize, edit_w.as_ptr()); }
+
+    unsafe { AppendMenuW(menu, MF_SEPARATOR, 0, std::ptr::null()); }
+
+    // Словарь галлюцинаций
+    let add_h = lang::t_utf16("tray.menu.add_hall");
+    unsafe { AppendMenuW(menu, MF_STRING, CMD_ADD_HALL as usize, add_h.as_ptr()); }
+
+    let edit_h = lang::t_utf16("tray.menu.edit_hall");
+    unsafe { AppendMenuW(menu, MF_STRING, CMD_EDIT_HALL as usize, edit_h.as_ptr()); }
 
     unsafe { AppendMenuW(menu, MF_SEPARATOR, 0, std::ptr::null()); }
 

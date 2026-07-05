@@ -95,7 +95,7 @@ fn main() {
     }
 
     set_dpi_awareness();
-    hide_console();
+    hide_console(&config);
 
     log::info!("VoxMiM v{}", env!("CARGO_PKG_VERSION"));
     log::info!("Конфиг загружен: {:?}", config);
@@ -157,7 +157,7 @@ fn set_dpi_awareness() {
 fn set_dpi_awareness() {}
 
 #[cfg(target_os = "windows")]
-fn hide_console() {
+fn hide_console(config: &Config) {
     unsafe extern "system" {
         fn GetConsoleWindow() -> isize;
         fn ShowWindow(hWnd: *mut std::ffi::c_void, nCmdShow: i32) -> i32;
@@ -166,10 +166,12 @@ fn hide_console() {
         let hwnd = GetConsoleWindow();
         if hwnd != 0 {
             CONSOLE_HWND.store(hwnd, std::sync::atomic::Ordering::SeqCst);
-            ShowWindow(hwnd as *mut std::ffi::c_void, 0);
+            if !config.show_console_on_start {
+                ShowWindow(hwnd as *mut std::ffi::c_void, 0);
+            }
         }
     }
 }
 
 #[cfg(not(target_os = "windows"))]
-fn hide_console() {}
+fn hide_console(_config: &Config) {}

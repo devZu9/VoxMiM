@@ -3,8 +3,10 @@
   "tray.menu.settings": "Settings",
   "tray.menu.toggle_console.show": "Show Window",
   "tray.menu.toggle_console.hide": "Hide Window",
-  "tray.menu.add_word": "Add Word...",
-  "tray.menu.edit_dict": "Edit Dictionary",
+  "tray.menu.add_word": "Add Word to User Dictionary...",
+  "tray.menu.edit_dict": "Edit User Dictionary",
+  "tray.menu.add_hall": "Add Phrase to Hallucination Dictionary...",
+  "tray.menu.edit_hall": "Edit Hallucination Dictionary",
   "tray.menu.auto_stop": "Hold mode + auto-stop",
   "tray.menu.voice_activation": "Voice Activation",
   "tray.menu.math_mode": "Math Mode",
@@ -58,9 +60,12 @@
   "settings.log_enable": "Logging",
   "settings.log_dir": "Log directory:",
   "settings.keep_wav": "Keep WAV files",
+  "settings.show_console": "Show log window on startup",
   "dialog.add_word.title": "Add Word",
   "dialog.add_word.label_wrong": "As recognized:",
   "dialog.add_word.label_correct": "Correct spelling:",
   "dialog.add_word.add": "Add",
-  "dialog.add_word.cancel": "Cancel"
+  "dialog.add_word.cancel": "Cancel",
+  "dialog.add_hall.title": "Add Hallucination Phrase",
+  "dialog.add_hall.label": "Phrase (space-separated words):"
 }

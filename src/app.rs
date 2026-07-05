@@ -32,6 +32,8 @@ pub enum AppCommand {
     RecordingResult(String),
     AddUserEntry { wrong: String, correct: String },
     EditUserDict,
+    AddHallEntry { phrase: String },
+    EditHallDict,
     ApplyConfig(Box<Config>),
     Quit,
 }
@@ -141,8 +143,7 @@ impl App {
                 }
             }
         }
-        if config.detector_mode == "server" && det.is_loaded() && config.warmup_on_start {
-            // Детектор греется через one-shot (не стартует сервер)
+        if config.wake_mode && det.is_loaded() && config.warmup_on_start {
             let dummy = vec![0.0f32; 16000];
             match det.detect(&dummy) {
                 Ok(t) => dlog!("Прогрев детектора OK: {t:?}"),
@@ -411,6 +412,13 @@ impl App {
                 true
             }
             AppCommand::EditUserDict => { self.on_edit_user_dict(); true }
+            AppCommand::AddHallEntry { phrase } => {
+                if !phrase.trim().is_empty() {
+                    crate::text::hallucinations::add_custom_phrase(&phrase);
+                }
+                true
+            }
+            AppCommand::EditHallDict => { self.on_edit_hall_dict(); true }
             AppCommand::Quit => {
                 crate::ui::tray::request_exit();
                 false
@@ -443,6 +451,20 @@ impl App {
                 }
                 Err(e) => log::error!("Не удалось запустить настройки: {e}"),
             }
+        }
+    }
+
+    fn on_edit_hall_dict(&self) {
+        let path = crate::config::dicts_path().join("hallucinations.txt");
+        if !path.exists() {
+            if let Err(e) = std::fs::write(&path, "субтитры создавал\nпродолжение следует\n") {
+                log::error!("Не удалось создать hallucinations.txt: {e}");
+                return;
+            }
+        }
+        match std::process::Command::new("notepad.exe").arg(&path).spawn() {
+            Ok(_) => log::info!("Открыт hallucinations.txt в блокноте"),
+            Err(e) => log::error!("Не удалось открыть блокнот: {e}"),
         }
     }
 
@@ -588,6 +610,7 @@ impl App {
 
         let mut changes = Vec::new();
         if old.engine_mode != self.config.engine_mode {
+            crate::stt::engine::set_engine_mode_server(self.config.engine_mode == "server");
             changes.push(format!("engine_mode={}→{}", old.engine_mode, self.config.engine_mode));
         }
         if old.detector_mode != self.config.detector_mode {

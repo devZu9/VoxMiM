@@ -69,7 +69,11 @@ pub struct Config {
     pub keep_detector_loaded: Option<bool>,
     #[serde(default)]
     pub keep_wav: bool,
+    #[serde(default = "default_true")]
+    pub show_console_on_start: bool,
 }
+
+fn default_true() -> bool { true }
 
 fn default_engine_mode() -> String { "server".to_string() }
 
@@ -141,7 +145,7 @@ impl Default for Config {
             vad: VadConfig {
                 enabled: false,
                 aggressiveness: 1,
-                silence_duration_secs: 0.8,
+                silence_duration_secs: 1.5,
                 accept_short_speech: true,
                 start_timeout_secs: 2.0,
             },
@@ -187,6 +191,7 @@ impl Default for Config {
             keep_model_loaded: None,
             keep_detector_loaded: None,
             keep_wav: false,
+            show_console_on_start: true,
         }
     }
 }
