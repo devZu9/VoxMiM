@@ -37,7 +37,12 @@ fn init_logger(config: &Config) {
     let mut builder = env_logger::Builder::from_env(
         env_logger::Env::default().default_filter_or("info"),
     );
-    builder.format_timestamp_millis();
+    use std::io::Write;
+    builder.format(|buf, record| {
+        use chrono::Local;
+        let ts = Local::now().format("%Y-%m-%dT%H:%M:%S%.3f");
+        writeln!(buf, "[{ts} {:<5} {}] {}", record.level(), record.target(), record.args())
+    });
 
     if config.log_enabled {
         let dir = config
