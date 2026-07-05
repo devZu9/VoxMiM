@@ -2,7 +2,7 @@ use crate::audio::capture::AudioCapture;
 use crate::audio::processor::AudioProcessor;
 use crate::commands::executor::{CommandAction, CommandExecutor};
 use crate::config::Config;
-use crate::dlog;
+
 use crate::download;
 use crate::input::hotkeys::HotkeyListener;
 use crate::input::inserter::TextInserter;
@@ -146,8 +146,8 @@ impl App {
         if config.wake_mode && det.is_loaded() && config.warmup_on_start {
             let dummy = vec![0.0f32; 16000];
             match det.detect(&dummy) {
-                Ok(t) => dlog!("Прогрев детектора OK: {t:?}"),
-                Err(e) => dlog!("Прогрев детектора: {e}"),
+                Ok(t) => log::info!("Прогрев детектора OK: {t:?}"),
+                Err(e) => log::info!("Прогрев детектора: {e}"),
             }
         }
         let detector = Arc::new(Mutex::new(det));
@@ -404,7 +404,7 @@ impl App {
                 if self.config.language != old_lang {
                     crate::lang::load_locale(&self.config.language);
                 }
-                dlog!("Applied: engine_mode={}, trailing_space={}, lang={}, dark={}",
+                log::info!("Applied: engine_mode={}, trailing_space={}, lang={}, dark={}",
                     self.config.engine_mode,
                     self.config.text_fix.trailing_space,
                     self.config.language,

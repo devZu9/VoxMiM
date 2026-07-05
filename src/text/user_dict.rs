@@ -2,7 +2,7 @@ use regex::Regex;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::RwLock;
-use crate::dlog;
+
 
 struct CachedEntry {
     regex: Regex,
@@ -94,7 +94,6 @@ impl UserDict {
         }
 
         log::debug!("user_dict: записей в кеше {}", cache.len());
-        dlog!("user_dict: apply() на «{text}»");
 
         let mut result = String::with_capacity(text.len());
         let mut last_end = 0;
@@ -115,7 +114,7 @@ impl UserDict {
                 };
 
                 if left_ok && right_ok {
-                    dlog!("user_dict: найдено «{}» → «{}» на byte[{},{}]",
+                    log::info!("user_dict: найдено «{}» → «{}» на byte[{},{}]",
                         &text[m.start()..m.end()], entry.value, m.start(), m.end());
                     result.push_str(&text[last_end..m.start()]);
                     result.push_str(&entry.value);
@@ -127,7 +126,7 @@ impl UserDict {
         result.push_str(&text[last_end..]);
 
         if result != text {
-            dlog!("user_dict: замена: «{text}» → «{result}»");
+            log::info!("user_dict: замена: «{text}» → «{result}»");
         }
 
         result

@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 
-use crate::dlog;
+
 
 pub static KEEP_WAV: AtomicBool = AtomicBool::new(false);
 pub fn set_keep_wav_global(keep: bool) { KEEP_WAV.store(keep, Ordering::SeqCst); }
@@ -189,7 +189,7 @@ impl WhisperEngine {
         let path = path.as_ref();
         if !path.exists() { return Err(format!("Модель не найдена: {}", path.display())); }
         self.model_path = path.to_string_lossy().to_string();
-        dlog!("Engine: модель: {}", path.display());
+        log::info!("Engine: модель: {}", path.display());
         Ok(())
     }
 
@@ -252,7 +252,7 @@ impl WhisperEngine {
 
         if !resp.contains("200 OK") && !resp.contains("200 ok") {
             let body = parse_http_body(&resp).trim().to_string();
-            dlog!("Server: HTTP error — {body}");
+            log::error!("Server: HTTP error — {body}");
             *self.server.lock().unwrap() = None;
             if !KEEP_WAV.load(Ordering::SeqCst) { let _ = std::fs::remove_file(&path); }
             return Err(format!("Server error: {body}"));
@@ -276,7 +276,7 @@ impl WhisperEngine {
             .stdout(Stdio::null()).stderr(Stdio::null())
             .spawn().map(|mut c| { let _ = c.wait(); });
 
-        dlog!("Server: запуск {}", exe.display());
+        log::info!("Server: запуск {}", exe.display());
         if self.model_path.is_empty() { return Err("Модель не задана".to_string()); }
 
         let bins = bins_dir();
@@ -288,7 +288,7 @@ impl WhisperEngine {
             .current_dir(&bins).spawn()
             .map_err(|e| format!("spawn: {e}"))?;
 
-        dlog!("Server: PID={}", child.id());
+        log::info!("Server: PID={}", child.id());
 
         let start = std::time::Instant::now();
         loop {
@@ -305,7 +305,7 @@ impl WhisperEngine {
             match http_get("/health") {
                 Ok(r) if r.contains("200 OK") || r.contains("200 ok") => {
                     *self.server.lock().unwrap() = Some(child);
-                    dlog!("Server: готов за {}ms", start.elapsed().as_millis());
+                    log::info!("Server: готов за {}ms", start.elapsed().as_millis());
                     return Ok(());
                 }
                 _ => { std::thread::sleep(Duration::from_millis(200)); }
@@ -327,7 +327,7 @@ impl WhisperEngine {
     fn stop_server(&self) {
         if let Some(mut child) = self.server.lock().unwrap().take() {
             let _ = child.kill(); let _ = child.wait();
-            dlog!("Server: stop");
+            log::info!("Server: stop");
         }
     }
 
@@ -342,8 +342,8 @@ impl WhisperEngine {
     pub fn warmup(&self) {
         let dummy = vec![0.0f32; 16000];
         match self.transcribe(&dummy) {
-            Ok(t) => dlog!("Прогрев OK: {t:?}"),
-            Err(e) => dlog!("Прогрев: {e}"),
+            Ok(t) => log::info!("Прогрев OK: {t:?}"),
+            Err(e) => log::info!("Прогрев: {e}"),
         }
     }
 }

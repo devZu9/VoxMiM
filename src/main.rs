@@ -2,7 +2,7 @@ mod app;
 mod audio;
 mod commands;
 mod config;
-mod debug_log;
+
 mod download;
 mod input;
 mod lang;
@@ -41,7 +41,10 @@ fn init_logger(config: &Config) {
     builder.format(|buf, record| {
         use chrono::Local;
         let ts = Local::now().format("%Y-%m-%dT%H:%M:%S%.3f");
-        writeln!(buf, "[{ts} {:<5} {}] {}", record.level(), record.target(), record.args())
+        let level = buf.default_level_style(record.level());
+        writeln!(buf, "[{ts} {start}{lvl:<5}{end:#} {target}] {args}",
+            start = level, lvl = record.level(), end = level,
+            target = record.target(), args = record.args())
     });
 
     if config.log_enabled {
@@ -78,16 +81,14 @@ fn main() {
             let hwnd = GetConsoleWindow() as *mut std::ffi::c_void;
             if !hwnd.is_null() { ShowWindow(hwnd, 5); /* SW_SHOW */ }
         }
-        dlog!("PANIC: {info}");
+        log::error!("PANIC: {info}");
         eprintln!("VoxMiM упала. Лог: logs/voxmim_debug.log");
         let _ = std::io::stdin().read_line(&mut String::new());
     }));
 
     let config = Config::load();
 
-    // Debug-лог — пишет всё с самого старта в logs/voxmim_debug.log
-    debug_log::init();
-    dlog!("VoxMiM v{} старт", env!("CARGO_PKG_VERSION"));
+    log::info!("VoxMiM v{} старт", env!("CARGO_PKG_VERSION"));
 
     init_logger(&config);
 
