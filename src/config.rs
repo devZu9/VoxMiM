@@ -71,6 +71,12 @@ pub struct Config {
     pub keep_wav: bool,
     #[serde(default = "default_true")]
     pub show_console_on_start: bool,
+    #[serde(default)]
+    pub window_x: i32,
+    #[serde(default)]
+    pub window_y: i32,
+    #[serde(default)]
+    pub cur_tab: usize,
 }
 
 fn default_true() -> bool { true }
@@ -192,6 +198,9 @@ impl Default for Config {
             keep_detector_loaded: None,
             keep_wav: false,
             show_console_on_start: true,
+            window_x: 0,
+            window_y: 0,
+            cur_tab: 0,
         }
     }
 }
@@ -211,8 +220,7 @@ impl Config {
                 }
             }
             log::info!("config.json не найден, создаю по умолчанию");
-            let mut cfg = Config::default();
-            cfg.migrate_from_voxbee();
+            let cfg = Config::default();
             cfg
         };
 
@@ -252,129 +260,12 @@ impl Config {
             }
         }
 
-        if let Err(e) = cfg.save() {
-            log::warn!("Не удалось сохранить config.json: {e}");
-        }
 
         if let Err(e) = crate::config::ensure_paths(&cfg) {
             log::warn!("Не удалось создать папки: {e}");
         }
 
         cfg
-    }
-
-    fn migrate_from_voxbee(&mut self) {
-        let appdata = std::env::var("APPDATA").unwrap_or_else(|_| ".".into());
-        let voxbee_dir = std::path::Path::new(&appdata).join("VoxBee");
-        let voxbee_config = voxbee_dir.join("config.json");
-
-        if !voxbee_config.exists() {
-            return;
-        }
-
-        log::info!("Миграция из VoxBee: {}", voxbee_config.display());
-
-        let content = match std::fs::read_to_string(&voxbee_config) {
-            Ok(c) => c,
-            Err(_) => return,
-        };
-
-        let v: serde_json::Value = match serde_json::from_str(&content) {
-            Ok(v) => v,
-            Err(_) => return,
-        };
-
-        if let Some(idx) = v.get("microphone_index").and_then(|v| v.as_u64()) {
-            self.mic_index = Some(idx as usize);
-        }
-        if let Some(name) = v.get("microphone_name").and_then(|v| v.as_str()) {
-            self.mic_name = Some(name.to_string());
-        }
-        if let Some(gpu) = v.get("use_gpu").and_then(|v| v.as_bool()) {
-            self.use_gpu = gpu;
-        }
-        if let Some(model) = v.get("model_name").and_then(|v| v.as_str()) {
-            let path = models_dir().join(model);
-            if path.exists() {
-                self.model_path = path;
-            } else {
-                let known: [&std::path::Path; 3] = [
-                    r"C:\_workPortable\WhisperCpp\models\ggml-large-v3-russian.bin".as_ref(),
-                    r"C:\_workPortable\WhisperCpp\models\ggml-large-v3-turbo-q8_0.bin".as_ref(),
-                    r"C:\_workPortable\WhisperCpp\models\ggml-medium-q8_0.bin".as_ref(),
-                ];
-                let model_file = std::path::Path::new(model).file_name()
-                    .and_then(|f| f.to_str()).unwrap_or(model);
-                if let Some(existing) = known.iter().find(|p| {
-                    std::path::Path::new(p).file_name()
-                        .and_then(|f| f.to_str()) == Some(model_file)
-                }) {
-                    self.model_path = std::path::PathBuf::from(existing);
-                } else {
-                    self.model_path = path;
-                }
-            }
-        }
-        if let Some(lang) = v.get("language").and_then(|v| v.as_str()) {
-            self.language = lang.to_string();
-        }
-        if let Some(threads) = v.get("threads").and_then(|v| v.as_u64()) {
-            self.threads = threads as u32;
-        }
-        if let Some(vad_aggr) = v.get("vad_aggressiveness").and_then(|v| v.as_u64()) {
-            self.vad.aggressiveness = vad_aggr as u32;
-        }
-        if let Some(vad_sil) = v.get("vad_silence_duration").and_then(|v| v.as_f64()) {
-            self.vad.silence_duration_secs = vad_sil as f64 as f32;
-        }
-        if let Some(short) = v.get("vad_accept_short_speech").and_then(|v| v.as_bool()) {
-            self.vad.accept_short_speech = short;
-        }
-        if let Some(vad_mode) = v.get("vad_mode").and_then(|v| v.as_bool()) {
-            self.vad.enabled = vad_mode;
-        }
-        if let Some(warmup) = v.get("warmup_on_start").and_then(|v| v.as_bool()) {
-            self.warmup_on_start = warmup;
-        }
-        if let Some(pre) = v.get("pre_buffer_sec").and_then(|v| v.as_f64()) {
-            self.pre_buffer_secs = pre as f64 as f32;
-        }
-        if let Some(max) = v.get("max_duration_sec").and_then(|v| v.as_u64()) {
-            self.max_duration_sec = max as u32;
-        }
-        if let Some(step) = v.get("mouse_step").and_then(|v| v.as_u64()) {
-            self.mouse_step = step as u32;
-        }
-        if let Some(noise) = v.get("noise_filter_enabled").and_then(|v| v.as_bool()) {
-            self.noise_filter_enabled = noise;
-        }
-        if let Some(log) = v.get("log_enabled").and_then(|v| v.as_bool()) {
-            self.log_enabled = log;
-        }
-        if let Some(log_dir) = v.get("log_directory").and_then(|v| v.as_str()) {
-            if !log_dir.is_empty() {
-                self.log_dir = Some(PathBuf::from(log_dir));
-            }
-        }
-        if let Some(trig) = v.get("trigger_button").and_then(|v| v.as_str()) {
-            self.trigger.button = TriggerButton::Keyboard;
-            self.trigger.keyboard = Some(trig.replace("ctrl+key:", "ctrl+"));
-        }
-        if let Some(math) = v.get("math_mode").and_then(|v| v.as_bool()) {
-            self.math_mode = math;
-        }
-        if let Some(show) = v.get("show_recognition_result").and_then(|v| v.as_bool()) {
-            self.show_result = show;
-        }
-
-        if let Some(cmds) = v.get("text_fix_enabled").and_then(|v| v.as_bool()) {
-            self.text_fix.fix_hallucinations = cmds;
-            self.text_fix.fix_user_dict = cmds;
-            self.text_fix.fix_punctuation = cmds;
-            self.text_fix.fix_repetitions = cmds;
-        }
-
-        let _ = self.save();
     }
 
     pub fn save(&self) -> Result<(), Box<dyn std::error::Error>> {

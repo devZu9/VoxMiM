@@ -1,6 +1,6 @@
 use fenestra::prelude::*;
 use fenestra_kit::{checkbox, button, select, text_input, tabs, radio, icon_button, ControlSize, ButtonVariant};
-use fenestra::TextSize;
+use fenestra::{TextSize, TextAlign, Weight};
 use std::collections::HashMap;
 use std::ffi::c_void;
 
@@ -75,6 +75,8 @@ struct SettingsApp {
     keep_wav: bool,
     show_console: bool,
     locale: HashMap<String, String>,
+    window_x: i32,
+    window_y: i32,
 }
 
 impl SettingsApp {
@@ -335,6 +337,9 @@ fn set_from_value(app: &mut SettingsApp, cfg: &serde_json::Value) {
     app.show_console = cfg.get("show_console_on_start").and_then(|v| v.as_bool()).unwrap_or(true);
     app.cur_lang = if cfg.get("language").and_then(|v| v.as_str()).unwrap_or("ru") == "en" { 1 } else { 0 };
     app.cmd_max_words = cfg.get("command_max_words").and_then(|v| v.as_i64()).unwrap_or(3).to_string();
+    app.cur_tab = cfg.get("cur_tab").and_then(|v| v.as_i64()).unwrap_or(0) as usize;
+    app.window_x = cfg.get("window_x").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+    app.window_y = cfg.get("window_y").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
     app.locale = SettingsApp::load_locale(if app.cur_lang == 1 { "en" } else { "ru" });
 
     let model_path = cfg.get("model_path").and_then(|v| v.as_str()).unwrap_or("");
@@ -366,10 +371,10 @@ fn save_from_ui(app: &SettingsApp, cfg: &mut serde_json::Value) {
     set(cfg, &["wake_mode"], serde_json::json!(app.wake_enable));
     set(cfg, &["vad", "enabled"], serde_json::json!(app.vad_enable));
     set(cfg, &["vad", "aggressiveness"], serde_json::json!(app.vad_aggr));
-    if let Ok(secs) = app.vad_timeout.trim().parse::<f32>() {
+    if let Ok(secs) = app.vad_timeout.trim().parse::<f64>() {
         set(cfg, &["vad", "silence_duration_secs"], serde_json::json!(secs));
     }
-    if let Ok(secs) = app.vad_start_timeout.trim().parse::<f32>() {
+    if let Ok(secs) = app.vad_start_timeout.trim().parse::<f64>() {
         set(cfg, &["vad", "start_timeout_secs"], serde_json::json!(secs));
     }
     set(cfg, &["text_fix", "trailing_space"], serde_json::json!(app.trailing_space));
@@ -386,6 +391,9 @@ fn save_from_ui(app: &SettingsApp, cfg: &mut serde_json::Value) {
     set(cfg, &["keep_wav"], serde_json::json!(app.keep_wav));
     set(cfg, &["show_console_on_start"], serde_json::json!(app.show_console));
     set(cfg, &["language"], serde_json::json!(if app.cur_lang == 1 { "en" } else { "ru" }));
+    set(cfg, &["cur_tab"], serde_json::json!(app.cur_tab));
+    set(cfg, &["window_x"], serde_json::json!(app.window_x));
+    set(cfg, &["window_y"], serde_json::json!(app.window_y));
     if let Ok(n) = app.cmd_max_words.trim().parse::<u32>() {
         set(cfg, &["command_max_words"], serde_json::json!(n));
     }
@@ -409,7 +417,7 @@ impl App for SettingsApp {
 
     fn update(&mut self, msg: Msg) {
         match msg {
-            Msg::SetTab(t) => self.cur_tab = t,
+            Msg::SetTab(t) => { self.cur_tab = t; self.apply(); }
             Msg::SetEngineMode(v) => { self.engine_server = v; self.apply(); }
             Msg::SetDetMode(v) => { self.det_server = v; self.apply(); }
             Msg::ToggleGpu => { self.use_gpu = !self.use_gpu; self.apply(); }
@@ -497,7 +505,7 @@ impl App for SettingsApp {
             row().gap(SP2).items_center().children([
                 text(format!("VoxMiM — Settings v{ver}")).size(TextSize::Lg),
                 spacer(),
-                button("×").on_click(Msg::Close).into(),
+                icon_button(fenestra::text("×").color(Color::from_rgb8(255, 0, 0))).size(ControlSize::Xs).variant(ButtonVariant::Ghost).on_click(Msg::Close).into(),
             ])
         );
         c.push(divider());
@@ -526,15 +534,62 @@ impl App for SettingsApp {
     fn init(&mut self, _proxy: Proxy<Self::Msg>) {
         let cfg = load_config();
         set_from_value(self, &cfg);
+
+        if self.window_x != 0 || self.window_y != 0 {
+            unsafe extern "system" {
+                fn EnumWindows(lpEnumFunc: unsafe extern "system" fn(isize, isize) -> i32, lParam: isize) -> i32;
+                fn GetWindowThreadProcessId(hWnd: isize, lpdwProcessId: *mut u32) -> u32;
+                fn SetWindowPos(hWnd: isize, hWndInsertAfter: isize, X: i32, Y: i32, cx: i32, cy: i32, uFlags: u32) -> i32;
+            }
+            const SWP_NOSIZE: u32 = 0x0001;
+            const SWP_NOZORDER: u32 = 0x0004;
+            let (x, y) = (self.window_x, self.window_y);
+            let pid = std::process::id();
+            let cb_data = (x, y, pid);
+            unsafe extern "system" fn setpos_cb(hwnd: isize, lparam: isize) -> i32 {
+                unsafe {
+                    let (x, y, target_pid) = *(lparam as *const (i32, i32, u32));
+                    let mut window_pid: u32 = 0;
+                    GetWindowThreadProcessId(hwnd, &mut window_pid);
+                    if window_pid == target_pid {
+                        SetWindowPos(hwnd, 0, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER);
+                    }
+                }
+                1
+            }
+            unsafe {
+                EnumWindows(setpos_cb, &cb_data as *const _ as isize);
+            }
+        }
     }
 }
 
 impl SettingsApp {
-    fn apply(&self) {
+    fn apply(&mut self) {
+        self.save_window_position();
         let mut cfg = load_config();
         save_from_ui(self, &mut cfg);
         save_config(&cfg);
         send_pipe_message(b"reload");
+    }
+
+    fn save_window_position(&mut self) {
+        unsafe extern "system" {
+            fn GetActiveWindow() -> isize;
+            fn GetWindowRect(hWnd: isize, lpRect: *mut RECT) -> i32;
+        }
+        #[repr(C)]
+        struct RECT { left: i32, top: i32, right: i32, bottom: i32 }
+        unsafe {
+            let hwnd = GetActiveWindow();
+            if hwnd != 0 {
+                let mut r = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+                if GetWindowRect(hwnd, &mut r) != 0 {
+                    self.window_x = r.left;
+                    self.window_y = r.top;
+                }
+            }
+        }
     }
 
     fn tab_basic(&self) -> Element<Msg> {
@@ -542,36 +597,39 @@ impl SettingsApp {
         let en = self.engine_server;
         let de = self.det_server;
         col().gap(SP2).p(SP3).children(vec![
-            text(self.t("settings.engine_section")).into(),
-            radio(!en).label(self.t("settings.engine_one_shot")).on_select(Msg::SetEngineMode(false)).into(),
-            radio(en).label(self.t("settings.engine_server")).on_select(Msg::SetEngineMode(true)).into(),
+            text(self.t("settings.language_section")).weight(Weight::Semibold).text_align(TextAlign::End).into(),
             row().gap(SP2).children([
-                text(self.t("settings.models_dir")),
-                text_input(&self.model_dir).width(250.0).into(),
-                button(self.t("settings.browse")).on_click(Msg::BrowseFolder).into(),
-            ]),
-            row().gap(SP2).children([
-                text(self.t("settings.model")),
-                select(self.transcriber_model_idx, model_refs.clone()).width(350.0).on_change(Msg::SelectTranscriberModel).into(),
-            ]),
-            divider(),
-            text(self.t("settings.detector_section")).into(),
-            radio(!de).label(self.t("settings.engine_one_shot")).on_select(Msg::SetDetMode(false)).into(),
-            radio(de).label(self.t("settings.engine_server")).on_select(Msg::SetDetMode(true)).into(),
-            row().gap(SP2).children([
-                text(self.t("settings.models_dir")),
-                text_input(&self.model_dir).width(250.0).into(),
-                button(self.t("settings.browse")).on_click(Msg::BrowseFolder).into(),
-            ]),
-            row().gap(SP2).children([
-                text(self.t("settings.model")),
-                select(self.detector_model_idx, model_refs).width(350.0).on_change(Msg::SelectDetectorModel).into(),
+                spacer(),
+                select(self.cur_lang, ["Русский", "English"]).width(150.0).on_change(Msg::SetLang).into(),
             ]),
             divider(),
             checkbox(self.use_gpu).label(self.t("settings.gpu")).on_toggle(Msg::ToggleGpu).into(),
             divider(),
-            text(self.t("settings.language_section")).into(),
-            select(self.cur_lang, ["Русский", "English"]).width(150.0).on_change(Msg::SetLang).into(),
+            text(self.t("settings.engine_section")).weight(Weight::Semibold).text_align(TextAlign::End).into(),
+            radio(!en).label(self.t("settings.engine_one_shot")).on_select(Msg::SetEngineMode(false)).into(),
+            radio(en).label(self.t("settings.engine_server")).on_select(Msg::SetEngineMode(true)).into(),
+            row().gap(SP2).items_center().children([
+                text(self.t("settings.models_dir")),
+                text_input(&self.model_dir).width(250.0).into(),
+                button(self.t("settings.browse")).on_click(Msg::BrowseFolder).into(),
+            ]),
+            row().gap(SP2).items_center().children([
+                text(self.t("settings.model")),
+                select(self.transcriber_model_idx, model_refs.clone()).width(350.0).on_change(Msg::SelectTranscriberModel).into(),
+            ]),
+            divider(),
+            text(self.t("settings.detector_section")).weight(Weight::Semibold).text_align(TextAlign::End).into(),
+            radio(!de).label(self.t("settings.engine_one_shot")).on_select(Msg::SetDetMode(false)).into(),
+            radio(de).label(self.t("settings.engine_server")).on_select(Msg::SetDetMode(true)).into(),
+            row().gap(SP2).items_center().children([
+                text(self.t("settings.models_dir")),
+                text_input(&self.model_dir).width(250.0).into(),
+                button(self.t("settings.browse")).on_click(Msg::BrowseFolder).into(),
+            ]),
+            row().gap(SP2).items_center().children([
+                text(self.t("settings.model")),
+                select(self.detector_model_idx, model_refs).width(350.0).on_change(Msg::SelectDetectorModel).into(),
+            ]),
             spacer(),
         ])
     }
@@ -606,7 +664,7 @@ impl SettingsApp {
         col().gap(SP2).p(SP3).children(vec![
             checkbox(self.wake_enable).label(self.t("settings.wake_enable")).on_toggle(Msg::ToggleWake).into(),
             checkbox(self.vad_enable).label(self.t("settings.vad_enable")).on_toggle(Msg::ToggleVad).into(),
-            row().gap(SP2).children([
+            row().gap(SP2).items_center().children([
                 text(self.t("settings.vad_aggressiveness")),
                 select(self.vad_aggr, ["0", "1", "2", "3"]).width(100.0).on_change(Msg::SetVadAggr).into(),
             ]),
@@ -628,7 +686,7 @@ impl SettingsApp {
             checkbox(self.fix_user_dict).label(self.t("settings.fix_user_dict")).on_toggle(Msg::ToggleUserDict).into(),
             checkbox(self.fix_repetitions).label(self.t("settings.fix_repetitions")).on_toggle(Msg::ToggleRep).into(),
             checkbox(self.fix_punctuation).label(self.t("settings.fix_punctuation")).on_toggle(Msg::TogglePunct).into(),
-            row().gap(SP2).children([
+            row().gap(SP2).items_center().children([
                 text(self.t("settings.command_max_words")),
                 text_input(&self.cmd_max_words).width(60.0).on_input(|s| Msg::SetCmdMaxWords(s)).into(),
             ]),
@@ -686,6 +744,7 @@ fn main() {
         math_mode: false, noise_filter: true, warmup: true, show_result: false,
         log_enable: false, log_dir: String::new(), trailing_space: false,
         keep_wav: false, show_console: true, cur_lang: 0, locale: HashMap::new(),
+        window_x: 0, window_y: 0,
     };
     fenestra::run(app, opts);
 }
