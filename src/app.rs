@@ -54,7 +54,7 @@ pub struct App {
     state: AppState,
     config: Config,
     user_dict: UserDict,
-    inserter: TextInserter,
+    insert_tx: crossbeam_channel::Sender<String>,
     executor: CommandExecutor,
     _hotkey: Option<HotkeyListener>,
     _audio: Option<AudioCapture>,
@@ -305,6 +305,17 @@ impl App {
         crate::input::hotkeys::set_vad_enabled(config.vad.enabled);
         let hotkey = HotkeyListener::new(cmd_tx.clone(), config.trigger.button.clone());
 
+        // Insertion thread — изолирует clipboard от main loop
+        let (insert_tx, insert_rx) = crossbeam_channel::unbounded::<String>();
+        let _ = std::thread::Builder::new()
+            .name("inserter".into())
+            .spawn(move || {
+                let inserter = TextInserter::new();
+                while let Ok(text) = insert_rx.recv() {
+                    inserter.insert_text(&text);
+                }
+            });
+
         // Словарь
         let user_dict = UserDict::new();
         if let Some(ref path) = config.user_dict_path {
@@ -319,7 +330,7 @@ impl App {
             state: AppState::Idle,
             config,
             user_dict,
-            inserter: TextInserter::new(),
+            insert_tx,
             executor,
             _hotkey: Some(hotkey),
             _audio: Some(audio),
@@ -564,19 +575,19 @@ impl App {
         if self.config.math_mode {
             let math = crate::commands::math::convert_math(&fixed);
             if math != fixed {
-                self.inserter.insert_text(&math);
+                let _ = self.insert_tx.send(math);
                 self.state = AppState::Idle;
                 return;
             }
         }
 
-        self.inserter.insert_text(&fixed);
+        let _ = self.insert_tx.send(fixed);
         self.state = AppState::Idle;
     }
 
     fn execute_action(&self, action: &CommandAction) {
         match action {
-            CommandAction::Paste(t) => self.inserter.insert_text(t),
+            CommandAction::Paste(t) => { let _ = self.insert_tx.send(t.clone()); },
             CommandAction::Hotkey(v) => log::info!("Хоткей: {v}"),
             CommandAction::MouseMove(v) => log::info!("Мышь: {v}"),
             CommandAction::MouseClick(v) => log::info!("Клик: {v}"),
