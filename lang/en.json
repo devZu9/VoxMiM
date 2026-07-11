@@ -67,5 +67,6 @@
   "dialog.add_word.add": "Add",
   "dialog.add_word.cancel": "Cancel",
   "dialog.add_hall.title": "Add Hallucination Phrase",
-  "dialog.add_hall.label": "Phrase (space-separated words):"
+  "dialog.add_hall.label": "Phrase (space-separated words):",
+  "settings.whisper_timeout": "Recognition timeout (sec):"
 }

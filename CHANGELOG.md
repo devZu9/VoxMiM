@@ -7,6 +7,29 @@
 Формат — [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 проект следует [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.2] — 2026-07-11
+
+### Добавлено
+
+- **Таймаут распознавания whisper** — новое поле `whisper_timeout_secs` в `config.json` (default 120 сек, диапазон 10–180). Настраивается на вкладке «Постобработка» окна настроек (спин-кнопки ▲/▼, шаг 10).
+- **Retry-цикл 3 попытки при ошибке whisper** — если сервер не ответил в таймаут, whisper thread убивает зависший процесс, ждёт с backoff (500ms → 1s → 2s) и пробует снова. После 3 попыток отправляет пустой `RecordingResult` для сброса state = Idle.
+- **`warn!` логи на каждом сбое** — видно в консоли: «Whisper: попытка 1/3 не удалась».
+
+### Изменено
+
+- **`http_post()`: `set_read_timeout()` из `WHISPER_TIMEOUT_SECS`** — вместо вечного ожидания ответа сервера.
+- **`http_get()`: `set_read_timeout(5s)`** — health check не зависает.
+- **`stop_server()` — публичный метод** — вызывается из whisper worker при retry.
+- **Короткое аудио (<16000 сэмплов) — пустой `RecordingResult`** — main thread не застревает в `Processing`.
+
+### Исправлено
+
+- **Зависание программы при долгом ответе whisper-server** — раньше `read_to_string()` без таймаута блокировал whisper thread навсегда. Main thread оставался в `Processing`, хоткей не реагировал. Теперь retry + сброс состояния.
+
+### Версии
+
+- **voxmim**: 0.9.1 → 0.9.2
+
 ## [0.9.1] — 2026-07-10
 
 ### Изменено

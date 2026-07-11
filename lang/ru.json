@@ -67,5 +67,6 @@
   "dialog.add_word.add": "Добавить",
   "dialog.add_word.cancel": "Отмена",
   "dialog.add_hall.title": "Добавить фразу галлюцинации",
-  "dialog.add_hall.label": "Фраза (слова через пробел):"
+  "dialog.add_hall.label": "Фраза (слова через пробел):",
+  "settings.whisper_timeout": "Таймаут распознавания (сек):"
 }

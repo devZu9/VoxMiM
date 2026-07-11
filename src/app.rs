@@ -123,6 +123,7 @@ impl App {
         trans.set_language(&config.language);
         trans.set_mode(crate::stt::engine::EngineMode::from_str(&config.engine_mode));
         crate::stt::engine::set_keep_wav_global(config.keep_wav);
+        crate::stt::engine::set_whisper_timeout(config.whisper_timeout_secs);
         if config.model_path.exists() {
             if let Err(e) = trans.load_model(&config.model_path) {
                 log::error!("Транскрайбер: {e}");
@@ -226,7 +227,7 @@ impl App {
             config.vad.start_timeout_secs,
         );
 
-        // Whisper worker: транскрибация PTT
+        // Whisper worker: транскрибация PTT с ретраями
         let cmd_tx_w = cmd_tx.clone();
         let ts = transcriber.clone();
         std::thread::Builder::new()
@@ -235,16 +236,31 @@ impl App {
                 while let Ok(samples) = whisper_rx.recv() {
                     if samples.len() < 16000 {
                         log::warn!("Короткое аудио ({} сэмплов)", samples.len());
+                        let _ = cmd_tx_w.send(AppCommand::RecordingResult(String::new()));
                         continue;
                     }
-                    let text = match ts.lock().unwrap().transcribe(&samples) {
-                        Ok(t) => t,
-                        Err(e) => {
-                            log::error!("Whisper: {e}");
-                            continue;
+
+                    let mut last_err = String::new();
+                    let mut done = false;
+                    for attempt in 0..3 {
+                        match ts.lock().unwrap().transcribe(&samples) {
+                            Ok(text) => {
+                                let _ = cmd_tx_w.send(AppCommand::RecordingResult(text));
+                                done = true;
+                                break;
+                            }
+                            Err(e) => {
+                                last_err = e;
+                                log::warn!("Whisper: попытка {}/3 не удалась — {last_err}", attempt + 1);
+                                ts.lock().unwrap().stop_server();
+                                std::thread::sleep(std::time::Duration::from_millis(500 * (attempt + 1) as u64));
+                            }
                         }
-                    };
-                    let _ = cmd_tx_w.send(AppCommand::RecordingResult(text));
+                    }
+                    if !done {
+                        log::error!("Whisper: все 3 попытки провалились — {last_err}");
+                        let _ = cmd_tx_w.send(AppCommand::RecordingResult(String::new()));
+                    }
                 }
             })
             .ok();
@@ -697,6 +713,10 @@ impl App {
         if old.keep_wav != self.config.keep_wav {
             crate::stt::engine::set_keep_wav_global(self.config.keep_wav);
             changes.push(format!("keep_wav={}→{}", old.keep_wav, self.config.keep_wav));
+        }
+        if old.whisper_timeout_secs != self.config.whisper_timeout_secs {
+            crate::stt::engine::set_whisper_timeout(self.config.whisper_timeout_secs);
+            changes.push(format!("whisper_timeout={}→{}", old.whisper_timeout_secs, self.config.whisper_timeout_secs));
         }
 
         if changes.is_empty() {

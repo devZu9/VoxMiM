@@ -77,7 +77,11 @@ pub struct Config {
     pub window_y: i32,
     #[serde(default)]
     pub cur_tab: usize,
+    #[serde(default = "default_whisper_timeout")]
+    pub whisper_timeout_secs: u64,
 }
+
+fn default_whisper_timeout() -> u64 { 120 }
 
 fn default_true() -> bool { true }
 
@@ -203,6 +207,7 @@ impl Default for Config {
             window_x: 0,
             window_y: 0,
             cur_tab: 0,
+            whisper_timeout_secs: 120,
         }
     }
 }

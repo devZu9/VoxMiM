@@ -3,7 +3,7 @@ use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -11,6 +11,9 @@ use std::time::Duration;
 
 pub static KEEP_WAV: AtomicBool = AtomicBool::new(false);
 pub fn set_keep_wav_global(keep: bool) { KEEP_WAV.store(keep, Ordering::SeqCst); }
+
+pub static WHISPER_TIMEOUT_SECS: AtomicU64 = AtomicU64::new(120);
+pub fn set_whisper_timeout(secs: u64) { WHISPER_TIMEOUT_SECS.store(secs, Ordering::SeqCst); }
 
 pub static ENGINE_MODE_SERVER: AtomicBool = AtomicBool::new(true);
 pub fn set_engine_mode_server(is_server: bool) { ENGINE_MODE_SERVER.store(is_server, Ordering::SeqCst); }
@@ -90,6 +93,8 @@ fn http_get(path: &str) -> Result<String, String> {
     let mut stream = TcpStream::connect_timeout(
         &"127.0.0.1:8178".parse().unwrap(), Duration::from_secs(5),
     ).map_err(|e| format!("TCP: {e}"))?;
+    stream.set_read_timeout(Some(Duration::from_secs(5)))
+        .map_err(|e| format!("set_read_timeout: {e}"))?;
     let req = format!("GET {path} HTTP/1.1\r\nHost: 127.0.0.1:8178\r\nConnection: close\r\n\r\n");
     stream.write_all(req.as_bytes()).map_err(|e| format!("HTTP write: {e}"))?;
     let mut resp = String::new();
@@ -101,6 +106,9 @@ fn http_post(path: &str, content_type: &str, body: &[u8]) -> Result<String, Stri
     let mut stream = TcpStream::connect_timeout(
         &"127.0.0.1:8178".parse().unwrap(), Duration::from_secs(5),
     ).map_err(|e| format!("TCP: {e}"))?;
+    let timeout = WHISPER_TIMEOUT_SECS.load(Ordering::SeqCst);
+    stream.set_read_timeout(Some(Duration::from_secs(timeout)))
+        .map_err(|e| format!("set_read_timeout: {e}"))?;
     let headers = format!(
         "POST {path} HTTP/1.1\r\nHost: 127.0.0.1:8178\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
         body.len()
@@ -324,7 +332,7 @@ impl WhisperEngine {
         let _ = child.kill(); let _ = child.wait();
     }
 
-    fn stop_server(&self) {
+    pub fn stop_server(&self) {
         if let Some(mut child) = self.server.lock().unwrap().take() {
             let _ = child.kill(); let _ = child.wait();
             log::info!("Server: stop");

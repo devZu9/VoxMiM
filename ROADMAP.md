@@ -261,6 +261,7 @@ VoxMiM как модуль экосистемы DJA. Единый протоко
 | **DCP** | +12 | REST API + JSON-RPC 2.0 + регистрация в DJA | 🟠 |
 | **Release** | +9 | 1.0.0: .exe, README, тесты | 🟡 |
 | **Clipboard** | +9a | Clipboard изолирован от main loop | 🟢 **v0.9.1** |
+| **WhisperTimeout** | +9b | Таймаут + retry при зависании whisper-server | 🟢 **v0.9.2** |
 
 ---
 
@@ -285,3 +286,4 @@ VoxMiM как модуль экосистемы DJA. Единый протоко
 - [ ] Поддержка дополнительных языков локали (DE, FR, ES, ...)
 - [ ] `lang/` копируется при portable-сборке
 - [x] **Clipboard изолирован от main loop** — insert_text() вынесен в отдельный поток (v0.9.1)
+- [x] **Таймаут whisper + retry** — `set_read_timeout()`, 3 попытки с backoff, настройка в окне настроек (v0.9.2)

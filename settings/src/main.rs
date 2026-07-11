@@ -43,6 +43,9 @@ enum Msg {
     ToggleDark,
     ToggleKeepWav,
     ToggleShowConsole,
+    WhisperTimeoutUp,
+    WhisperTimeoutDown,
+    WhisperTimeoutSet(String),
     ReloadConfig,
     Debug,
     Close,
@@ -78,6 +81,7 @@ struct SettingsApp {
     cur_lang: usize,
     keep_wav: bool,
     show_console: bool,
+    whisper_timeout: String,
     locale: HashMap<String, String>,
     window_x: i32,
     window_y: i32,
@@ -352,6 +356,7 @@ fn set_from_value(app: &mut SettingsApp, cfg: &serde_json::Value) {
     app.show_console = cfg.get("show_console_on_start").and_then(|v| v.as_bool()).unwrap_or(true);
     app.cur_lang = if cfg.get("language").and_then(|v| v.as_str()).unwrap_or("ru") == "en" { 1 } else { 0 };
     app.cmd_max_words = cfg.get("command_max_words").and_then(|v| v.as_i64()).unwrap_or(3).to_string();
+    app.whisper_timeout = cfg.get("whisper_timeout_secs").and_then(|v| v.as_i64()).unwrap_or(120).to_string();
     app.cur_tab = cfg.get("cur_tab").and_then(|v| v.as_i64()).unwrap_or(0) as usize;
     app.window_x = cfg.get("window_x").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
     app.window_y = cfg.get("window_y").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
@@ -411,6 +416,10 @@ fn save_from_ui(app: &SettingsApp, cfg: &mut serde_json::Value) {
     set(cfg, &["dark_mode"], serde_json::json!(app.dark_mode));
     set(cfg, &["keep_wav"], serde_json::json!(app.keep_wav));
     set(cfg, &["show_console_on_start"], serde_json::json!(app.show_console));
+    if let Ok(n) = app.whisper_timeout.trim().parse::<u64>() {
+        let n = n.clamp(10, 180);
+        set(cfg, &["whisper_timeout_secs"], serde_json::json!(n));
+    }
     set(cfg, &["language"], serde_json::json!(if app.cur_lang == 1 { "en" } else { "ru" }));
     set(cfg, &["cur_tab"], serde_json::json!(app.cur_tab));
     set(cfg, &["window_x"], serde_json::json!(app.window_x));
@@ -532,6 +541,25 @@ impl App for SettingsApp {
             Msg::ToggleDark => { self.dark_mode = !self.dark_mode; self.apply(); }
             Msg::ToggleKeepWav => { self.keep_wav = !self.keep_wav; self.apply(); }
             Msg::ToggleShowConsole => { self.show_console = !self.show_console; self.apply(); }
+            Msg::WhisperTimeoutUp => {
+                let v: i64 = self.whisper_timeout.trim().parse().unwrap_or(120);
+                let v = (v + 10).min(180);
+                self.whisper_timeout = v.to_string();
+                self.apply();
+            }
+            Msg::WhisperTimeoutDown => {
+                let v: i64 = self.whisper_timeout.trim().parse().unwrap_or(120);
+                let v = (v - 10).max(10);
+                self.whisper_timeout = v.to_string();
+                self.apply();
+            }
+            Msg::WhisperTimeoutSet(s) => {
+                if let Ok(v) = s.trim().parse::<i64>() {
+                    let v = v.clamp(10, 180);
+                    self.whisper_timeout = v.to_string();
+                    self.apply();
+                }
+            }
             Msg::ReloadConfig => {
                 let new_cfg = load_config();
                 set_from_value(self, &new_cfg);
@@ -757,6 +785,14 @@ impl SettingsApp {
     }
 
     fn tab_text(&self) -> Element<Msg> {
+        let to = self.whisper_timeout.clone();
+        let field: Element<Msg> = text_input(&to).width(60.0).on_input(Msg::WhisperTimeoutSet).into();
+        let stepper: Vec<Element<Msg>> = vec![
+            icon_button(fenestra::text("▲")).size(ControlSize::Xs).variant(ButtonVariant::Ghost).on_click(Msg::WhisperTimeoutUp).into(),
+            field,
+            icon_button(fenestra::text("▼")).size(ControlSize::Xs).variant(ButtonVariant::Ghost).on_click(Msg::WhisperTimeoutDown).into(),
+        ];
+
         col().gap(SP2).p(SP3).children(vec![
             checkbox(self.fix_hallucinations).label(self.t("settings.fix_hallucinations")).on_toggle(Msg::ToggleHall).into(),
             checkbox(self.fix_user_dict).label(self.t("settings.fix_user_dict")).on_toggle(Msg::ToggleUserDict).into(),
@@ -765,6 +801,11 @@ impl SettingsApp {
             row().gap(SP2).items_center().children([
                 text(self.t("settings.command_max_words")),
                 text_input(&self.cmd_max_words).width(60.0).on_input(|s| Msg::SetCmdMaxWords(s)).into(),
+            ]),
+            divider(),
+            row().gap(SP2).items_center().children([
+                text(self.t("settings.whisper_timeout")),
+                col().gap(SP1).items_center().children(stepper).into(),
             ]),
             spacer(),
         ])
@@ -819,7 +860,7 @@ fn main() {
         fix_repetitions: true, fix_punctuation: true, cmd_max_words: "3".into(),
         math_mode: false, noise_filter: true, warmup: true, show_result: false,
         log_enable: false, log_dir: String::new(), trailing_space: false,
-        keep_wav: false, show_console: true, cur_lang: 0, locale: HashMap::new(),
+        keep_wav: false, show_console: true, whisper_timeout: "120".into(), cur_lang: 0, locale: HashMap::new(),
         window_x: 0, window_y: 0, proxy: None, last_config_mtime: 0,
     };
     fenestra::run(app, opts);
