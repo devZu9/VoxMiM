@@ -262,6 +262,7 @@ VoxMiM как модуль экосистемы DJA. Единый протоко
 | **Release** | +9 | 1.0.0: .exe, README, тесты | 🟡 |
 | **Clipboard** | +9a | Clipboard изолирован от main loop | 🟢 **v0.9.1** |
 | **WhisperTimeout** | +9b | Таймаут + retry при зависании whisper-server | 🟢 **v0.9.2** |
+| **WhisperFastFail** | +9c | State = Idle на первой ошибке, дефолт 60s, ретраи 30s | 🟢 **v0.9.3** |
 
 ---
 
@@ -287,3 +288,4 @@ VoxMiM как модуль экосистемы DJA. Единый протоко
 - [ ] `lang/` копируется при portable-сборке
 - [x] **Clipboard изолирован от main loop** — insert_text() вынесен в отдельный поток (v0.9.1)
 - [x] **Таймаут whisper + retry** — `set_read_timeout()`, 3 попытки с backoff, настройка в окне настроек (v0.9.2)
+- [x] **State = Idle сразу, дефолт 60s** — первая ошибка сбрасывает блокировку, ретраи 30s (v0.9.3)

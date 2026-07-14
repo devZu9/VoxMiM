@@ -12,7 +12,7 @@ use std::time::Duration;
 pub static KEEP_WAV: AtomicBool = AtomicBool::new(false);
 pub fn set_keep_wav_global(keep: bool) { KEEP_WAV.store(keep, Ordering::SeqCst); }
 
-pub static WHISPER_TIMEOUT_SECS: AtomicU64 = AtomicU64::new(120);
+pub static WHISPER_TIMEOUT_SECS: AtomicU64 = AtomicU64::new(60);
 pub fn set_whisper_timeout(secs: u64) { WHISPER_TIMEOUT_SECS.store(secs, Ordering::SeqCst); }
 
 pub static ENGINE_MODE_SERVER: AtomicBool = AtomicBool::new(true);

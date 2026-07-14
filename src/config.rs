@@ -81,7 +81,7 @@ pub struct Config {
     pub whisper_timeout_secs: u64,
 }
 
-fn default_whisper_timeout() -> u64 { 120 }
+fn default_whisper_timeout() -> u64 { 60 }
 
 fn default_true() -> bool { true }
 
@@ -207,7 +207,7 @@ impl Default for Config {
             window_x: 0,
             window_y: 0,
             cur_tab: 0,
-            whisper_timeout_secs: 120,
+            whisper_timeout_secs: 60,
         }
     }
 }

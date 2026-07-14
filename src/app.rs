@@ -241,25 +241,32 @@ impl App {
                     }
 
                     let mut last_err = String::new();
-                    let mut done = false;
+                    let orig_timeout = crate::stt::engine::WHISPER_TIMEOUT_SECS.load(std::sync::atomic::Ordering::SeqCst);
                     for attempt in 0..3 {
+                        if attempt > 0 {
+                            crate::stt::engine::set_whisper_timeout(30);
+                        }
                         match ts.lock().unwrap().transcribe(&samples) {
                             Ok(text) => {
+                                crate::stt::engine::set_whisper_timeout(orig_timeout);
                                 let _ = cmd_tx_w.send(AppCommand::RecordingResult(text));
-                                done = true;
                                 break;
                             }
                             Err(e) => {
                                 last_err = e;
                                 log::warn!("Whisper: попытка {}/3 не удалась — {last_err}", attempt + 1);
+                                if attempt == 0 {
+                                    // Сразу сбрасываем state = Idle
+                                    let _ = cmd_tx_w.send(AppCommand::RecordingResult(String::new()));
+                                }
                                 ts.lock().unwrap().stop_server();
                                 std::thread::sleep(std::time::Duration::from_millis(500 * (attempt + 1) as u64));
                             }
                         }
                     }
-                    if !done {
+                    crate::stt::engine::set_whisper_timeout(orig_timeout);
+                    if !last_err.is_empty() {
                         log::error!("Whisper: все 3 попытки провалились — {last_err}");
-                        let _ = cmd_tx_w.send(AppCommand::RecordingResult(String::new()));
                     }
                 }
             })
