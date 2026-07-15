@@ -148,6 +148,9 @@ static TRAY_HICON_BLANK: AtomicUsize = AtomicUsize::new(0);
 static TRAY_IS_RECORDING: AtomicBool = AtomicBool::new(false);
 static TRAY_BLINK_TOGGLE: AtomicBool = AtomicBool::new(false);
 static TRAY_HAS_READY: AtomicBool = AtomicBool::new(false);
+pub static TRAY_RECOVERING: AtomicBool = AtomicBool::new(false);
+
+pub fn set_recovering(v: bool) { TRAY_RECOVERING.store(v, Ordering::SeqCst); }
 
 pub struct TrayManager;
 
@@ -260,7 +263,9 @@ unsafe extern "system" fn wnd_proc(
                         .map(|r| r.load(Ordering::SeqCst))
                         .unwrap_or(false);
 
-                    let hicon = if !ready {
+                    let recovering = TRAY_RECOVERING.load(Ordering::SeqCst);
+
+                    let hicon = if !ready || recovering {
                         TRAY_HAS_READY.store(false, Ordering::SeqCst);
                         let prev = TRAY_BLINK_TOGGLE.fetch_xor(true, Ordering::SeqCst);
                         if prev {

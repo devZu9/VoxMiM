@@ -227,46 +227,71 @@ impl App {
             config.vad.start_timeout_secs,
         );
 
-        // Whisper worker: транскрибация PTT с ретраями
+        // Whisper worker: транскрибация PTT
         let cmd_tx_w = cmd_tx.clone();
         let ts = transcriber.clone();
         std::thread::Builder::new()
             .name("whisper".into())
             .spawn(move || {
-                while let Ok(samples) = whisper_rx.recv() {
+                let pending_path = || {
+                    std::env::current_exe()
+                        .ok().and_then(|p| p.parent().map(|p| p.join("wavs").join("pending.wav")))
+                        .unwrap_or_else(|| std::path::PathBuf::from("wavs\\pending.wav"))
+                };
+
+                loop {
+                    // Сначала пробуем pending.wav, если есть
+                    let pp = pending_path();
+                    if pp.exists() {
+                        crate::ui::tray::set_recovering(true);
+                        match crate::stt::engine::read_wav(&pp) {
+                            Ok((pending_samples, _rate)) => {
+                                match ts.lock().unwrap().transcribe(&pending_samples) {
+                                    Ok(text) => {
+                                        log::info!("Pending WAV: распознан — {text}");
+                                        let _ = cmd_tx_w.send(AppCommand::RecordingResult(text));
+                                        let _ = std::fs::remove_file(&pp);
+                                    }
+                                    Err(e) => {
+                                        log::warn!("Pending WAV: {e}");
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                log::warn!("Pending WAV read: {e}");
+                                let _ = std::fs::remove_file(&pp);
+                            }
+                        }
+                        crate::ui::tray::set_recovering(false);
+                    }
+
+                    // Ждём новую запись
+                    let samples = match whisper_rx.recv() {
+                        Ok(s) => s,
+                        Err(_) => break,
+                    };
                     if samples.len() < 16000 {
                         log::warn!("Короткое аудио ({} сэмплов)", samples.len());
                         let _ = cmd_tx_w.send(AppCommand::RecordingResult(String::new()));
                         continue;
                     }
 
-                    let mut last_err = String::new();
-                    let orig_timeout = crate::stt::engine::WHISPER_TIMEOUT_SECS.load(std::sync::atomic::Ordering::SeqCst);
-                    for attempt in 0..3 {
-                        if attempt > 0 {
-                            crate::stt::engine::set_whisper_timeout(30);
+                    match ts.lock().unwrap().transcribe(&samples) {
+                        Ok(text) => {
+                            let _ = cmd_tx_w.send(AppCommand::RecordingResult(text));
                         }
-                        match ts.lock().unwrap().transcribe(&samples) {
-                            Ok(text) => {
-                                crate::stt::engine::set_whisper_timeout(orig_timeout);
-                                let _ = cmd_tx_w.send(AppCommand::RecordingResult(text));
-                                break;
+                        Err(e) => {
+                            log::error!("Whisper: {e}");
+                            ts.lock().unwrap().stop_server();
+                            // Сохраняем для retry
+                            let pp = pending_path();
+                            if let Err(we) = crate::stt::engine::write_wav(&pp, &samples, ts.lock().unwrap().input_rate()) {
+                                log::error!("Pending WAV save: {we}");
+                            } else {
+                                log::info!("Pending WAV: сохранён");
                             }
-                            Err(e) => {
-                                last_err = e;
-                                log::warn!("Whisper: попытка {}/3 не удалась — {last_err}", attempt + 1);
-                                if attempt == 0 {
-                                    // Сразу сбрасываем state = Idle
-                                    let _ = cmd_tx_w.send(AppCommand::RecordingResult(String::new()));
-                                }
-                                ts.lock().unwrap().stop_server();
-                                std::thread::sleep(std::time::Duration::from_millis(500 * (attempt + 1) as u64));
-                            }
+                            let _ = cmd_tx_w.send(AppCommand::RecordingResult(String::new()));
                         }
-                    }
-                    crate::stt::engine::set_whisper_timeout(orig_timeout);
-                    if !last_err.is_empty() {
-                        log::error!("Whisper: все 3 попытки провалились — {last_err}");
                     }
                 }
             })

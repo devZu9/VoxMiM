@@ -55,6 +55,21 @@ pub(crate) fn write_wav(path: &Path, samples: &[f32], input_rate: u32) -> Result
     std::fs::write(path, &wav).map_err(|e| format!("Ошибка записи WAV: {e}"))
 }
 
+pub(crate) fn read_wav(path: &Path) -> Result<(Vec<f32>, u32), String> {
+    let data = std::fs::read(path).map_err(|e| format!("read_wav: {e}"))?;
+    if data.len() < 44 {
+        return Err("Invalid WAV: too short".to_string());
+    }
+    let sample_rate = u32::from_le_bytes([data[24], data[25], data[26], data[27]]);
+    let pcm16: Vec<i16> = data[44..].chunks_exact(2)
+        .map(|c| i16::from_le_bytes([c[0], c[1]]))
+        .collect();
+    let samples: Vec<f32> = pcm16.iter()
+        .map(|&s| (s as f32) / 32767.0)
+        .collect();
+    Ok((samples, sample_rate))
+}
+
 fn resample_to_16khz(samples: &[f32], input_rate: u32) -> Vec<f32> {
     if input_rate == 16000 || input_rate == 0 { return samples.to_vec(); }
     let ratio = (input_rate / 16000) as usize;
@@ -126,7 +141,7 @@ fn parse_http_body(resp: &str) -> &str {
     else { resp }
 }
 
-fn wavs_dir() -> PathBuf {
+pub(crate) fn wavs_dir() -> PathBuf {
     let dir = std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(|p| p.join("wavs")))
@@ -204,6 +219,7 @@ impl WhisperEngine {
     pub fn set_language(&mut self, lang: &str) { self.language = lang.to_string(); }
     pub fn is_loaded(&self) -> bool { !self.model_path.is_empty() }
     pub fn set_input_rate(&mut self, rate: u32) { self.input_rate = rate; }
+    pub fn input_rate(&self) -> u32 { self.input_rate }
 
     pub fn transcribe(&self, samples: &[f32]) -> Result<String, String> {
         if ENGINE_MODE_SERVER.load(Ordering::SeqCst) {
