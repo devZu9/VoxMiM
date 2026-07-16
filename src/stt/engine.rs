@@ -122,6 +122,8 @@ fn http_get(path: &str) -> Result<String, String> {
     ).map_err(|e| format!("TCP: {e}"))?;
     stream.set_read_timeout(Some(Duration::from_secs(5)))
         .map_err(|e| format!("set_read_timeout: {e}"))?;
+    stream.set_write_timeout(Some(Duration::from_secs(5)))
+        .map_err(|e| format!("set_write_timeout: {e}"))?;
     let req = format!("GET {path} HTTP/1.1\r\nHost: 127.0.0.1:8178\r\nConnection: close\r\n\r\n");
     stream.write_all(req.as_bytes()).map_err(|e| format!("HTTP write: {e}"))?;
     let mut resp = String::new();
@@ -136,6 +138,8 @@ fn http_post(path: &str, content_type: &str, body: &[u8]) -> Result<String, Stri
     let timeout = WHISPER_TIMEOUT_SECS.load(Ordering::SeqCst);
     stream.set_read_timeout(Some(Duration::from_secs(timeout)))
         .map_err(|e| format!("set_read_timeout: {e}"))?;
+    stream.set_write_timeout(Some(Duration::from_secs(timeout)))
+        .map_err(|e| format!("set_write_timeout: {e}"))?;
     let headers = format!(
         "POST {path} HTTP/1.1\r\nHost: 127.0.0.1:8178\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
         body.len()
@@ -339,12 +343,12 @@ impl WhisperEngine {
         loop {
             if start.elapsed() > Duration::from_secs(30) {
                 let stderr = capture_stderr(&mut child);
-                self.kill(&mut child);
+                let _ = child.kill(); let _ = child.wait();
                 return Err(format!("Таймаут. stderr: {stderr}"));
             }
             if !child.try_wait().map(|s| s.is_none()).unwrap_or(false) {
                 let stderr = capture_stderr(&mut child);
-                self.kill(&mut child);
+                let _ = child.kill(); let _ = child.wait();
                 return Err(format!("Сервер умер. stderr: {stderr}"));
             }
             match http_get("/health") {
@@ -365,15 +369,17 @@ impl WhisperEngine {
         } else { false }
     }
 
-    fn kill(&self, child: &mut Child) {
-        let _ = child.kill(); let _ = child.wait();
+    fn taskkill(&self) {
+        let _ = Command::new("taskkill")
+            .args(["/f", "/im", "whisper-server.exe"])
+            .stdout(Stdio::null()).stderr(Stdio::null())
+            .spawn();
     }
 
     pub fn stop_server(&self) {
-        if let Some(mut child) = self.server.lock().unwrap().take() {
-            let _ = child.kill(); let _ = child.wait();
-            log::info!("Server: stop");
-        }
+        *self.server.lock().unwrap() = None;
+        self.taskkill();
+        log::info!("Server: stop (taskkill)");
     }
 
     pub fn detect(&self, samples: &[f32]) -> Result<String, String> {
