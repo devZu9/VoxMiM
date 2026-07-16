@@ -45,29 +45,41 @@ fn cli_exe() -> PathBuf {
     bins.join("whisper-cli.exe")
 }
 
-pub(crate) fn write_wav(path: &Path, samples: &[f32], input_rate: u32) -> Result<(), String> {
+pub fn wav_to_bytes(samples: &[f32], input_rate: u32) -> Result<Vec<u8>, String> {
     let pcm = resample_to_16khz(samples, input_rate);
     let pcm16: Vec<u8> = pcm.iter()
         .flat_map(|&s| ((s.clamp(-1.0, 1.0) * 32767.0) as i16).to_le_bytes())
         .collect();
     let h = wav_header(pcm16.len() as u32, 16000);
-    let wav: Vec<u8> = h.into_iter().chain(pcm16).collect();
-    std::fs::write(path, &wav).map_err(|e| format!("Ошибка записи WAV: {e}"))
+    Ok(h.into_iter().chain(pcm16).collect())
 }
 
-pub(crate) fn read_wav(path: &Path) -> Result<(Vec<f32>, u32), String> {
-    let data = std::fs::read(path).map_err(|e| format!("read_wav: {e}"))?;
-    if data.len() < 44 {
-        return Err("Invalid WAV: too short".to_string());
+pub(crate) fn write_wav(path: &Path, samples: &[f32], input_rate: u32) -> Result<(), String> {
+    let bytes = wav_to_bytes(samples, input_rate)?;
+    std::fs::write(path, &bytes).map_err(|e| format!("write_wav: {e}"))
+}
+
+pub fn save_pending(path: &Path, samples: &[f32], rate: u32) -> Result<(), String> {
+    let mut data = rate.to_le_bytes().to_vec();
+    for &s in samples {
+        data.extend_from_slice(&s.to_le_bytes());
     }
-    let sample_rate = u32::from_le_bytes([data[24], data[25], data[26], data[27]]);
-    let pcm16: Vec<i16> = data[44..].chunks_exact(2)
-        .map(|c| i16::from_le_bytes([c[0], c[1]]))
+    std::fs::write(path, &data).map_err(|e| format!("save_pending: {e}"))
+}
+
+pub fn load_pending(path: &Path) -> Result<(Vec<f32>, u32), String> {
+    let data = std::fs::read(path).map_err(|e| format!("load_pending: {e}"))?;
+    if data.len() < 4 {
+        return Err("pending: файл повреждён (меньше 4 байт)".to_string());
+    }
+    let rate = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
+    let samples: Vec<f32> = data[4..].chunks_exact(4)
+        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
         .collect();
-    let samples: Vec<f32> = pcm16.iter()
-        .map(|&s| (s as f32) / 32767.0)
-        .collect();
-    Ok((samples, sample_rate))
+    if samples.is_empty() {
+        return Err("pending: нет семплов".to_string());
+    }
+    Ok((samples, rate))
 }
 
 fn resample_to_16khz(samples: &[f32], input_rate: u32) -> Vec<f32> {
@@ -265,12 +277,23 @@ impl WhisperEngine {
         if !exe.exists() { return Err("whisper-server.exe не найден".to_string()); }
 
         self.ensure_server(&exe)?;
-        let path = wav_path();
-        write_wav(&path, samples, self.input_rate)?;
-        log::info!("WAV: {} (через server :{})", path.display(), SERVER_PORT);
 
-        let file_data = std::fs::read(&path).map_err(|e| format!("Read: {e}"))?;
-        let multipart = build_multipart(&file_data, "audio.wav", &self.language);
+        // Конвертируем в WAV в памяти, без диска
+        let wav_bytes = wav_to_bytes(samples, self.input_rate)?;
+
+        // Если keep_wav — сохраняем на диск для отладки
+        if KEEP_WAV.load(Ordering::SeqCst) {
+            let path = wav_path();
+            if let Err(e) = std::fs::write(&path, &wav_bytes) {
+                log::warn!("keep_wav: не удалось сохранить {e}");
+            } else {
+                log::info!("WAV: сохранён {}", path.display());
+            }
+        }
+
+        log::info!("WAV: {} сэмплов (через server :{})", samples.len(), SERVER_PORT);
+
+        let multipart = build_multipart(&wav_bytes, "audio.wav", &self.language);
         let ct = "multipart/form-data; boundary=----VoxMiMFormBoundary".to_string();
         let resp = http_post("/inference", &ct, &multipart)?;
 
@@ -278,7 +301,6 @@ impl WhisperEngine {
             let body = parse_http_body(&resp).trim().to_string();
             log::error!("Server: HTTP error — {body}");
             *self.server.lock().unwrap() = None;
-            if !KEEP_WAV.load(Ordering::SeqCst) { let _ = std::fs::remove_file(&path); }
             return Err(format!("Server error: {body}"));
         }
 
@@ -287,7 +309,6 @@ impl WhisperEngine {
             .ok().and_then(|j| j["text"].as_str().map(|s| s.replace('\n', "").trim().to_string()))
             .unwrap_or_default();
 
-        if !KEEP_WAV.load(Ordering::SeqCst) { let _ = std::fs::remove_file(&path); }
         Ok(text)
     }
 

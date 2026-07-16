@@ -227,7 +227,7 @@ impl App {
             config.vad.start_timeout_secs,
         );
 
-        // Whisper worker: транскрибация PTT
+        // Whisper worker: транскрибация PTT + retry pending
         let cmd_tx_w = cmd_tx.clone();
         let ts = transcriber.clone();
         std::thread::Builder::new()
@@ -235,37 +235,46 @@ impl App {
             .spawn(move || {
                 let pending_path = || {
                     std::env::current_exe()
-                        .ok().and_then(|p| p.parent().map(|p| p.join("wavs").join("pending.wav")))
-                        .unwrap_or_else(|| std::path::PathBuf::from("wavs\\pending.wav"))
+                        .ok().and_then(|p| p.parent().map(|p| p.join("wavs").join("pending.raw")))
+                        .unwrap_or_else(|| std::path::PathBuf::from("wavs\\pending.raw"))
                 };
 
                 loop {
-                    // Сначала пробуем pending.wav, если есть
+                    // ── retry pending ──
                     let pp = pending_path();
                     if pp.exists() {
+                        log::info!("Pending: найден {}, загружаю...", pp.display());
                         crate::ui::tray::set_recovering(true);
-                        match crate::stt::engine::read_wav(&pp) {
-                            Ok((pending_samples, _rate)) => {
-                                match ts.lock().unwrap().transcribe(&pending_samples) {
+                        match crate::stt::engine::load_pending(&pp) {
+                            Ok((pending_samples, pending_rate)) => {
+                                log::info!("Pending: загружено {} сэмплов ({}Hz), отправляю на transcribe...", pending_samples.len(), pending_rate);
+                                let mut engine = ts.lock().unwrap();
+                                let saved_rate = engine.input_rate();
+                                engine.set_input_rate(pending_rate);
+                                match engine.transcribe(&pending_samples) {
                                     Ok(text) => {
-                                        log::info!("Pending WAV: распознан — {text}");
+                                        engine.set_input_rate(saved_rate);
+                                        log::info!("Pending: ✅ распознан — «{text}»");
                                         let _ = cmd_tx_w.send(AppCommand::RecordingResult(text));
                                         let _ = std::fs::remove_file(&pp);
+                                        log::info!("Pending: файл удалён");
                                     }
                                     Err(e) => {
-                                        log::warn!("Pending WAV: {e}");
+                                        engine.set_input_rate(saved_rate);
+                                        log::warn!("Pending: ❌ сервер снова не ответил — {e}");
+                                        log::info!("Pending: файл оставлен до следующего цикла");
                                     }
                                 }
                             }
                             Err(e) => {
-                                log::warn!("Pending WAV read: {e}");
+                                log::warn!("Pending: повреждён — {e}, удаляю");
                                 let _ = std::fs::remove_file(&pp);
                             }
                         }
                         crate::ui::tray::set_recovering(false);
                     }
 
-                    // Ждём новую запись
+                    // ── новая запись ──
                     let samples = match whisper_rx.recv() {
                         Ok(s) => s,
                         Err(_) => break,
@@ -281,15 +290,21 @@ impl App {
                             let _ = cmd_tx_w.send(AppCommand::RecordingResult(text));
                         }
                         Err(e) => {
-                            log::error!("Whisper: {e}");
+                            log::error!("Whisper: не удалось распознать — {e}");
                             ts.lock().unwrap().stop_server();
+                            log::info!("Server: остановлен (kill)");
+
                             // Сохраняем для retry
+                            let sample_rate = ts.lock().unwrap().input_rate();
                             let pp = pending_path();
-                            if let Err(we) = crate::stt::engine::write_wav(&pp, &samples, ts.lock().unwrap().input_rate()) {
-                                log::error!("Pending WAV save: {we}");
-                            } else {
-                                log::info!("Pending WAV: сохранён");
+                            match crate::stt::engine::save_pending(&pp, &samples, sample_rate) {
+                                Ok(_) => log::info!("Pending: сохранено {} сэмплов ({}Hz) → {}", samples.len(), sample_rate, pp.display()),
+                                Err(we) => log::error!("Pending: не удалось сохранить — {we}"),
                             }
+
+                            crate::ui::tray::set_recovering(true);
+                            log::info!("TRAY: включён режим восстановления (hourglass)");
+                            log::info!("Pending: state = Idle, хоткей разблокирован, retry на следующем цикле");
                             let _ = cmd_tx_w.send(AppCommand::RecordingResult(String::new()));
                         }
                     }

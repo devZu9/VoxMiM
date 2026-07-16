@@ -264,6 +264,7 @@ VoxMiM как модуль экосистемы DJA. Единый протоко
 | **WhisperTimeout** | +9b | Таймаут + retry при зависании whisper-server | 🟢 **v0.9.2** |
 | **WhisperFastFail** | +9c | State = Idle на первой ошибке, дефолт 60s, ретраи 30s | 🟢 **v0.9.3** |
 | **PendingWav** | +9d | Pending.wav + индикатор перезапуска в трее | 🟢 **v0.9.4** |
+| **PendingRaw** | +9e | Pending.raw (сырые f32+rate), transcribe_server без диска, детальный лог | 🟢 **v0.9.5** |
 
 ---
 
@@ -291,3 +292,4 @@ VoxMiM как модуль экосистемы DJA. Единый протоко
 - [x] **Таймаут whisper + retry** — `set_read_timeout()`, 3 попытки с backoff, настройка в окне настроек (v0.9.2)
 - [x] **State = Idle сразу, дефолт 60s** — первая ошибка сбрасывает блокировку, ретраи 30s (v0.9.3)
 - [x] **Pending WAV + индикатор в трее** — фраза сохраняется на диск, hourglass при перезапуске (v0.9.4)
+- [x] **Pending.raw + transcribe_server без диска** — сырые f32+rate, нет двойного ресемпла, детальный лог (v0.9.5)

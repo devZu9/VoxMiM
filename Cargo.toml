@@ -3,7 +3,7 @@ members = [".", "settings"]
 
 [package]
 name = "voxmim"
-version = "0.9.4"
+version = "0.9.5"
 edition = "2024"
 description = "Голосовой ввод текста на Rust. На основе идей VoxBee с исправлением разорванных слов."
 license = "MIT"
