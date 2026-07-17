@@ -7,25 +7,17 @@
 Формат — [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 проект следует [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.9.7] — 2026-07-17
-
-### Изменено
-
-- **Весь transcribe — через spawned thread + `recv_timeout`.** Гарантированный таймаут на уровне канала (std::sync::mpsc), не зависящий от SO_RCVTIMEO/SO_SNDTIMEO Windows. На Windows эти таймауты могут не работать из-за особенностей `write_all` (пишет частями, каждая часть успевает до таймаута, общий вызов не завершается никогда).
-- **Таймаутный путь НЕ трогает `ts.lock()`.** Если spawned thread завис с захваченным `Mutex<WhisperEngine>`, код таймаута не пытается его повторно захватить — это вызвало бы deadlock. Вместо этого: `taskkill_global()` (статическая, без &self) + `save_pending(&samples, 48000)` (хардкодом, без engine.input_rate).
-- **`taskkill_global()` — публичная статическая функция.** Вызывается без `Mutex<WhisperEngine>`, без `&self`. Просто `Command::new("taskkill").spawn()`.
+## [0.9.8] — 2026-07-17
 
 ### Исправлено
 
-- **100% гарантия выхода из зависания.** После таймаута программа:
-  1. убивает whisper-server через taskkill
-  2. сохраняет pending.raw
-  3. отправляет `RecordingResult("")` → state = Idle
-  4. когда зависший поток отвиснет (соединение оборвётся после taskkill) — мьютекс освободится, и следующий transcribe заработает
+- **`stop_server()` убивал чужой сервер на старте.** Из-за безусловного `taskkill_global()` при дропе `detector` (второго WhisperEngine для wake word) убивался основной сервер транскрайбера. Теперь `stop_server()` вызывает `taskkill_global()` только если сервер реально был запущен.
 
 ### Версии
 
-- **voxmim**: 0.9.6 → 0.9.7
+- **voxmim**: 0.9.7 → 0.9.8
+
+## [0.9.7] — 2026-07-17
 
 ## [0.9.6] — 2026-07-16
 
