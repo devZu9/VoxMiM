@@ -377,9 +377,10 @@ impl WhisperEngine {
     }
 
     pub fn stop_server(&self) {
-        *self.server.lock().unwrap() = None;
-        taskkill_global();
-        log::info!("Server: stop (taskkill)");
+        if self.server.lock().unwrap().take().is_some() {
+            taskkill_global();
+            log::info!("Server: stop (taskkill)");
+        }
     }
 
     pub fn detect(&self, samples: &[f32]) -> Result<String, String> {
