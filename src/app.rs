@@ -285,26 +285,56 @@ impl App {
                         continue;
                     }
 
-                    match ts.lock().unwrap().transcribe(&samples) {
-                        Ok(text) => {
+                    // Транскрибация в отдельном потоке с гарантированным таймаутом
+                    let ts_clone = ts.clone();
+                    let samples_clone = samples.clone();
+                    let (tx, rx) = std::sync::mpsc::channel::<Result<String, String>>();
+
+                    let _ = std::thread::Builder::new()
+                        .name("transcribe".into())
+                        .spawn(move || {
+                            let result = ts_clone.lock().unwrap().transcribe(&samples_clone);
+                            let _ = tx.send(result);
+                        });
+
+                    let timeout = crate::stt::engine::WHISPER_TIMEOUT_SECS.load(std::sync::atomic::Ordering::SeqCst);
+                    match rx.recv_timeout(std::time::Duration::from_secs(timeout)) {
+                        Ok(Ok(text)) => {
                             let _ = cmd_tx_w.send(AppCommand::RecordingResult(text));
                         }
-                        Err(e) => {
-                            log::error!("Whisper: не удалось распознать — {e}");
+                        Ok(Err(e)) => {
+                            log::warn!("Whisper: ошибка — {e}");
                             ts.lock().unwrap().stop_server();
-                            log::info!("Server: остановлен (kill)");
-
-                            // Сохраняем для retry
-                            let sample_rate = ts.lock().unwrap().input_rate();
                             let pp = pending_path();
-                            match crate::stt::engine::save_pending(&pp, &samples, sample_rate) {
-                                Ok(_) => log::info!("Pending: сохранено {} сэмплов ({}Hz) → {}", samples.len(), sample_rate, pp.display()),
-                                Err(we) => log::error!("Pending: не удалось сохранить — {we}"),
+                            let rate = ts.lock().unwrap().input_rate();
+                            if let Err(we) = crate::stt::engine::save_pending(&pp, &samples, rate) {
+                                log::error!("Pending: не удалось сохранить — {we}");
+                            } else {
+                                log::info!("Pending: сохранено {} сэмплов ({}Hz) → {}", samples.len(), rate, pp.display());
+                            }
+                            crate::ui::tray::set_recovering(true);
+                            log::info!("TRAY: включён режим восстановления (hourglass)");
+                            log::info!("Pending: state = Idle, хоткей разблокирован, retry на следующем цикле");
+                            let _ = cmd_tx_w.send(AppCommand::RecordingResult(String::new()));
+                        }
+                        Err(_) => {
+                            // Таймаут — поток ВИСИТ, ts.lock() трогать НЕЛЬЗЯ!
+                            log::error!("Whisper: таймаут {}с — сервер не ответил", timeout);
+
+                            log::info!("Server: убиваю через taskkill...");
+                            crate::stt::engine::taskkill_global();
+
+                            let pp = pending_path();
+                            log::info!("Pending: сохраняю {} сэмплов...", samples.len());
+                            if let Err(we) = crate::stt::engine::save_pending(&pp, &samples, 48000) {
+                                log::error!("Pending: не удалось сохранить — {we}");
+                            } else {
+                                log::info!("Pending: сохранено {} сэмплов (48000Hz) → {}", samples.len(), pp.display());
                             }
 
                             crate::ui::tray::set_recovering(true);
                             log::info!("TRAY: включён режим восстановления (hourglass)");
-                            log::info!("Pending: state = Idle, хоткей разблокирован, retry на следующем цикле");
+                            log::info!("Pending: state = Idle, хоткей разблокирован, retry на следующем цикле (когда отвиснет старый поток)");
                             let _ = cmd_tx_w.send(AppCommand::RecordingResult(String::new()));
                         }
                     }

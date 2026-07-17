@@ -18,6 +18,13 @@ pub fn set_whisper_timeout(secs: u64) { WHISPER_TIMEOUT_SECS.store(secs, Orderin
 pub static ENGINE_MODE_SERVER: AtomicBool = AtomicBool::new(true);
 pub fn set_engine_mode_server(is_server: bool) { ENGINE_MODE_SERVER.store(is_server, Ordering::SeqCst); }
 
+pub fn taskkill_global() {
+    let _ = Command::new("taskkill")
+        .args(["/f", "/im", "whisper-server.exe"])
+        .stdout(Stdio::null()).stderr(Stdio::null())
+        .spawn();
+}
+
 const SERVER_PORT: u16 = 8178;
 
 fn bins_dir() -> PathBuf {
@@ -319,11 +326,11 @@ impl WhisperEngine {
     fn ensure_server(&self, exe: &Path) -> Result<(), String> {
         if self.is_server_alive() { return Ok(()); }
 
-        // Убиваем старые копии whisper-server на порту 8178
+        // Убиваем старые процессы с ожиданием — чтобы порт освободился
         let _ = Command::new("taskkill")
             .args(["/f", "/im", "whisper-server.exe"])
             .stdout(Stdio::null()).stderr(Stdio::null())
-            .spawn().map(|mut c| { let _ = c.wait(); });
+            .spawn().map(|mut c| c.wait());
 
         log::info!("Server: запуск {}", exe.display());
         if self.model_path.is_empty() { return Err("Модель не задана".to_string()); }
@@ -369,16 +376,9 @@ impl WhisperEngine {
         } else { false }
     }
 
-    fn taskkill(&self) {
-        let _ = Command::new("taskkill")
-            .args(["/f", "/im", "whisper-server.exe"])
-            .stdout(Stdio::null()).stderr(Stdio::null())
-            .spawn();
-    }
-
     pub fn stop_server(&self) {
         *self.server.lock().unwrap() = None;
-        self.taskkill();
+        taskkill_global();
         log::info!("Server: stop (taskkill)");
     }
 
