@@ -257,21 +257,22 @@ impl App {
                                         log::info!("Pending: ✅ распознан — «{text}»");
                                         let _ = cmd_tx_w.send(AppCommand::RecordingResult(text));
                                         let _ = std::fs::remove_file(&pp);
-                                        log::info!("Pending: файл удалён");
+                                        log::info!("Pending: файл удалён, восстановление завершено");
+                                        crate::ui::tray::set_recovering(false);
                                     }
                                     Err(e) => {
                                         engine.set_input_rate(saved_rate);
-                                        log::warn!("Pending: ❌ сервер снова не ответил — {e}");
-                                        log::info!("Pending: файл оставлен до следующего цикла");
+                                        log::warn!("Pending: ❌ — {e}");
+                                        log::info!("Pending: файл оставлен, восстанавливаюсь дальше");
                                     }
                                 }
                             }
                             Err(e) => {
                                 log::warn!("Pending: повреждён — {e}, удаляю");
                                 let _ = std::fs::remove_file(&pp);
+                                crate::ui::tray::set_recovering(false);
                             }
                         }
-                        crate::ui::tray::set_recovering(false);
                     }
 
                     // ── новая запись ──
@@ -315,6 +316,7 @@ impl App {
                                                 log::info!("Pending: ✅ распознан — «{pending_text}»");
                                                 let _ = cmd_tx_w.send(AppCommand::RecordingResult(pending_text));
                                                 let _ = std::fs::remove_file(&pp);
+                                                crate::ui::tray::set_recovering(false);
                                             }
                                             Err(e) => {
                                                 engine.set_input_rate(saved_rate);
@@ -328,6 +330,7 @@ impl App {
                                     }
                                 }
                             }
+                            crate::ui::tray::set_recovering(false);
                             let _ = cmd_tx_w.send(AppCommand::RecordingResult(text));
                         }
                         Ok(Err(e)) => {
