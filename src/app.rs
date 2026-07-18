@@ -300,6 +300,34 @@ impl App {
                     let timeout = crate::stt::engine::WHISPER_TIMEOUT_SECS.load(std::sync::atomic::Ordering::SeqCst);
                     match rx.recv_timeout(std::time::Duration::from_secs(timeout)) {
                         Ok(Ok(text)) => {
+                            // Сервер работал — сразу ретраим pending, если есть
+                            let pp = pending_path();
+                            if pp.exists() {
+                                match crate::stt::engine::load_pending(&pp) {
+                                    Ok((pending_samples, pending_rate)) => {
+                                        log::info!("Pending: сервер жив, пробую распознать...");
+                                        let mut engine = ts.lock().unwrap();
+                                        let saved_rate = engine.input_rate();
+                                        engine.set_input_rate(pending_rate);
+                                        match engine.transcribe(&pending_samples) {
+                                            Ok(pending_text) => {
+                                                engine.set_input_rate(saved_rate);
+                                                log::info!("Pending: ✅ распознан — «{pending_text}»");
+                                                let _ = cmd_tx_w.send(AppCommand::RecordingResult(pending_text));
+                                                let _ = std::fs::remove_file(&pp);
+                                            }
+                                            Err(e) => {
+                                                engine.set_input_rate(saved_rate);
+                                                log::warn!("Pending: ❌ — {e}");
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        log::warn!("Pending: повреждён — {e}, удаляю");
+                                        let _ = std::fs::remove_file(&pp);
+                                    }
+                                }
+                            }
                             let _ = cmd_tx_w.send(AppCommand::RecordingResult(text));
                         }
                         Ok(Err(e)) => {
