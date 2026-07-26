@@ -243,34 +243,63 @@ impl App {
                     // ── retry pending ──
                     let pp = pending_path();
                     if pp.exists() {
-                        log::info!("Pending: найден {}, загружаю...", pp.display());
+                        log::info!("Pending: найден {}", pp.display());
                         crate::ui::tray::set_recovering(true);
-                        match crate::stt::engine::load_pending(&pp) {
-                            Ok((pending_samples, pending_rate)) => {
-                                log::info!("Pending: загружено {} сэмплов ({}Hz), отправляю на transcribe...", pending_samples.len(), pending_rate);
-                                let mut engine = ts.lock().unwrap();
-                                let saved_rate = engine.input_rate();
-                                engine.set_input_rate(pending_rate);
-                                match engine.transcribe(&pending_samples) {
-                                    Ok(text) => {
-                                        engine.set_input_rate(saved_rate);
-                                        log::info!("Pending: ✅ распознан — «{text}»");
-                                        let _ = cmd_tx_w.send(AppCommand::RecordingResult(text));
-                                        let _ = std::fs::remove_file(&pp);
-                                        log::info!("Pending: файл удалён, восстановление завершено");
-                                        crate::ui::tray::set_recovering(false);
+
+                        let mut attempt: u64 = 0;
+                        loop {
+                            attempt += 1;
+                            // Пауза растёт 3→4→5→...→10, на 10 потолок
+                            let delay = (2u64 + attempt).min(10);
+
+                            // Ждём с возможностью прерывания от новой записи
+                            match whisper_rx.recv_timeout(std::time::Duration::from_secs(delay)) {
+                                Ok(new_samples) => {
+                                    log::info!("Pending: новая запись, транскрибирую...");
+                                    let result = ts.lock().unwrap().transcribe(&new_samples);
+                                    match result {
+                                        Ok(text) => {
+                                            let _ = cmd_tx_w.send(AppCommand::RecordingResult(text));
+                                        }
+                                        Err(e) => {
+                                            log::warn!("Whisper: {e}");
+                                            ts.lock().unwrap().stop_server();
+                                        }
                                     }
-                                    Err(e) => {
-                                        engine.set_input_rate(saved_rate);
-                                        log::warn!("Pending: ❌ — {e}");
-                                        log::info!("Pending: файл оставлен, восстанавливаюсь дальше");
+                                    // pending.raw остаётся — retry на следующем цикле
+                                    break;
+                                }
+                                Err(_) => {} // таймаут — пробуем retry
+                            }
+
+                            // Ретрай pending
+                            match crate::stt::engine::load_pending(&pp) {
+                                Ok((pending_samples, pending_rate)) => {
+                                    let mut engine = ts.lock().unwrap();
+                                    let saved_rate = engine.input_rate();
+                                    engine.set_input_rate(pending_rate);
+                                    match engine.transcribe(&pending_samples) {
+                                        Ok(text) => {
+                                            engine.set_input_rate(saved_rate);
+                                            log::info!("Pending: ✅ распознан — «{text}»");
+                                            let _ = cmd_tx_w.send(AppCommand::RecordingResult(text));
+                                            let _ = std::fs::remove_file(&pp);
+                                            log::info!("Pending: файл удалён, восстановление завершено");
+                                            crate::ui::tray::set_recovering(false);
+                                            break;
+                                        }
+                                        Err(e) => {
+                                            engine.set_input_rate(saved_rate);
+                                            log::warn!("Pending: ❌ попытка {}, повтор через {}с — {e}", attempt, delay);
+                                        }
                                     }
                                 }
-                            }
-                            Err(e) => {
-                                log::warn!("Pending: повреждён — {e}, удаляю");
-                                let _ = std::fs::remove_file(&pp);
-                                crate::ui::tray::set_recovering(false);
+                                Err(e) => {
+                                    log::warn!("Pending: повреждён — {e}, удаляю");
+                                    let _ = std::fs::remove_file(&pp);
+                                    crate::ui::tray::set_recovering(false);
+                                    break;
+                                }
                             }
                         }
                     }
