@@ -258,6 +258,7 @@ fn make_image(data: &[u8]) -> Option<Retained<NSImage>> {
         let obj: *mut NSImage = msg_send![NSImage::class(), alloc];
         let obj: *mut NSImage = msg_send![obj, initWithData: &*ns_data];
         let img = Retained::from_raw(obj)?;
+        img.setTemplate(true);
         img.setSize(objc2_foundation::NSSize { width: 18.0, height: 18.0 });
         Some(img)
     }
