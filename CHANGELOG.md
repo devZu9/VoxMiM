@@ -1,11 +1,38 @@
 # Changelog
 
-
-
 Все значимые изменения VoxMiM документируются в этом файле.
 
 Формат — [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 проект следует [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [0.10.0] — 2026-07-30
+
+### Добавлено — macOS порт
+
+- **Полный порт на macOS (Apple Silicon).** Программа собрана и работает на M1 Pro:
+  - **Трей в меню-баре** — `NSStatusBar` + `NSStatusItem` + `NSMenu` (objc2-app-kit 0.3)
+  - **Глобальный хоткей Cmd+Esc** — `CGEventTap` (core-graphics) в отдельном потоке с CFRunLoop
+  - **Вставка текста** — `pbcopy`/`pbpaste` + `CGEventPost` (Cmd+V), clipboard сохранён
+  - **Приложение без иконки в доке** — `NSApplicationActivationPolicy::Accessory`
+  - **Запуск:** NSApp на главном потоке, логика приложения на фоновом потоке
+- **Платформенная развязка** — `#[cfg]`-гейты для всех модулей:
+  - `src/ui/tray_windows.rs` / `tray_macos.rs`
+  - `src/pipe_windows.rs` / `pipe_macos.rs`
+  - `src/ui/dialog_windows.rs` / `dialog_macos.rs`
+  - `src/download_windows.rs` / `download_macos.rs`
+- **Unix Domain Socket IPC** — для settings-приложения на macOS (вместо Named Pipes)
+- **AudioCapture: `unsafe impl Send`** — CoreAudio thread-safe на macOS
+- **scripts/:** `run.sh`, `make-app.sh`, `fix-permissions.sh` — сборка и запуск
+
+### Исправлено — macOS
+
+- **whisper-server: dylib-зависимости.** `build_whisper()` теперь копирует `.dylib` (libwhisper, libggml-*) в `bins/` и правит `@rpath` → `@loader_path` через `install_name_tool`
+- **CGEventTap: сообщение об ошибке.** Указаны оба разрешения macOS: `Универсальный доступ` + `Мониторинг ввода`
+- **Трей: autoreleasepool.** Цикл обновления иконки обёрнут в `objc2::rc::autoreleasepool`, чтобы autorelease-объекты не висели в памяти
+
+### Версии
+
+- **voxmim**: 0.9.6 → 0.10.0
 
 ## [0.9.5] — 2026-07-18
 

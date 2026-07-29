@@ -2,6 +2,18 @@
 
 > Правила оформления — в `.opencode/skills/session-log/SKILL.md`
 
+## Сессия 29-30.07 — v0.10.0 macOS port
+- 2026-07-29 (23:03) — начата
+- 2026-07-30 (00:15) — whisper-server работает, диктовка прошла
+
+---
+
+- [x] **macOS порт завершён** 🟢 *(30.07.2026)* — трей NSStatusBar, CGEventTap Cmd+Esc, pbcopy+Cmd+V
+- [x] **dylib-фикс whisper** 🟢 *(30.07.2026)* — копирование .dylib + install_name_tool
+- [x] **Unix socket IPC** 🟢 *(30.07.2026)* — pipe_macos.rs
+- [x] **Merge v0.9.6→v0.9.8 c GitHub** 🟢 *(29.07.2026)* — стянуты Windows-изменения, мерж без ошибок
+- [x] **Обе сборки: macOS + Windows check** 🟢 *(29.07.2026)* — 0 errors
+
 ## Сессия 16.07 — v0.9.6
 - 2026-07-16 (12:58) - начата
 

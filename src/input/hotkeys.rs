@@ -37,11 +37,8 @@ struct KBDLLHOOKSTRUCT {
     dwExtraInfo: usize,
 }
 
-#[cfg(target_os = "windows")]
 static HOOK_REC: AtomicBool = AtomicBool::new(false);
-#[cfg(target_os = "windows")]
 static HOOK_TX: Mutex<Option<Sender<AppCommand>>> = Mutex::new(None);
-#[cfg(target_os = "windows")]
 static VAD_ENABLED: AtomicBool = AtomicBool::new(false);
 static VAD_KEY_LOCK: AtomicBool = AtomicBool::new(false);
 
@@ -111,7 +108,95 @@ impl HotkeyListener {
         Self { _hook: handle }
     }
 
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "macos")]
+    fn install_kbd_hook(tx: Sender<AppCommand>) -> Self {
+        use core_foundation::runloop::{CFRunLoop, kCFRunLoopDefaultMode};
+        use core_graphics::event::{
+            CGEventTap, CGEventTapLocation, CGEventTapOptions,
+            CGEventTapPlacement, CGEventTapProxy, CGEventType, EventField,
+        };
+
+        *HOOK_TX.lock().unwrap() = Some(tx);
+        HOOK_REC.store(false, Ordering::SeqCst);
+
+        let handle = std::thread::Builder::new()
+            .name("hotkey".into())
+            .spawn(move || {
+                let cb_tx = {
+                    let guard = HOOK_TX.lock().unwrap();
+                    guard.clone().unwrap()
+                };
+
+                let tap = match CGEventTap::new(
+                    CGEventTapLocation::HID,
+                    CGEventTapPlacement::HeadInsertEventTap,
+                    CGEventTapOptions::Default,
+                    vec![CGEventType::KeyDown, CGEventType::KeyUp],
+                    move |_proxy: CGEventTapProxy, _etype: CGEventType, event: &core_graphics::event::CGEvent| {
+                        let flags = event.get_flags();
+                        if !flags.contains(core_graphics::event::CGEventFlags::CGEventFlagCommand) {
+                            return Some(event.clone());
+                        }
+
+                        let keycode = event.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE) as u16;
+                        if keycode != core_graphics::event::KeyCode::ESCAPE {
+                            return Some(event.clone());
+                        }
+
+                        let is_down = matches!(event.get_type(), CGEventType::KeyDown);
+                        let vad = VAD_ENABLED.load(Ordering::SeqCst);
+
+                        if is_down {
+                            if vad {
+                                if VAD_KEY_LOCK.load(Ordering::SeqCst) {
+                                    return Some(event.clone());
+                                }
+                                VAD_KEY_LOCK.store(true, Ordering::SeqCst);
+                                let _ = cb_tx.send(AppCommand::StartRecording);
+                            } else if !HOOK_REC.load(Ordering::SeqCst) {
+                                HOOK_REC.store(true, Ordering::SeqCst);
+                                let _ = cb_tx.send(AppCommand::StartRecording);
+                            }
+                        } else {
+                            if vad {
+                                VAD_KEY_LOCK.store(false, Ordering::SeqCst);
+                            } else if HOOK_REC.load(Ordering::SeqCst) {
+                                HOOK_REC.store(false, Ordering::SeqCst);
+                                let _ = cb_tx.send(AppCommand::StopRecording);
+                            }
+                        }
+
+                        Some(event.clone())
+                    },
+                ) {
+                    Ok(t) => t,
+                    Err(()) => {
+                        log::error!("CGEventTap не создан. Нужны разрешения: 1) Системные настройки → Конфиденциальность → Универсальный доступ → Terminal, 2) macOS 15+: → Мониторинг ввода → Terminal. После добавления перезапустите VoxMiM.");
+                        return;
+                    }
+                };
+
+                let current = CFRunLoop::get_current();
+                let loop_source = match tap.mach_port.create_runloop_source(0) {
+                    Ok(s) => s,
+                    Err(()) => {
+                        log::error!("RunLoopSource: ошибка создания");
+                        return;
+                    }
+                };
+                current.add_source(&loop_source, unsafe { kCFRunLoopDefaultMode });
+                tap.enable();
+                log::info!("CGEventTap установлен (Cmd+Esc)");
+
+                CFRunLoop::run_current();
+                log::info!("CGEventTap снят");
+            })
+            .ok();
+
+        Self { _hook: handle }
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     fn install_kbd_hook(tx: Sender<AppCommand>) -> Self {
         let _ = tx;
         Self { _hook: None }

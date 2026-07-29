@@ -36,20 +36,34 @@ fn bins_dir() -> PathBuf {
 
 fn server_exe() -> PathBuf {
     let bins = bins_dir();
-    for name in &["whisper-server.exe"] {
+    #[cfg(target_os = "windows")]
+    let names: &[&str] = &["whisper-server.exe"];
+    #[cfg(not(target_os = "windows"))]
+    let names: &[&str] = &["whisper-server"];
+    for name in names {
         let path = bins.join(name);
         if path.exists() { return path; }
     }
-    bins.join("whisper-server.exe")
+    #[cfg(target_os = "windows")]
+    { bins.join("whisper-server.exe") }
+    #[cfg(not(target_os = "windows"))]
+    { bins.join("whisper-server") }
 }
 
 fn cli_exe() -> PathBuf {
     let bins = bins_dir();
-    for name in &["whisper-cli.exe", "whisper-server.exe"] {
+    #[cfg(target_os = "windows")]
+    let names: &[&str] = &["whisper-cli.exe", "whisper-server.exe"];
+    #[cfg(not(target_os = "windows"))]
+    let names: &[&str] = &["whisper-cli", "whisper-server"];
+    for name in names {
         let path = bins.join(name);
         if path.exists() { return path; }
     }
-    bins.join("whisper-cli.exe")
+    #[cfg(target_os = "windows")]
+    { bins.join("whisper-cli.exe") }
+    #[cfg(not(target_os = "windows"))]
+    { bins.join("whisper-cli") }
 }
 
 pub fn wav_to_bytes(samples: &[f32], input_rate: u32) -> Result<Vec<u8>, String> {
@@ -255,7 +269,7 @@ impl WhisperEngine {
     // === One-shot ===
     fn transcribe_one_shot(&self, samples: &[f32]) -> Result<String, String> {
         let exe = cli_exe();
-        if !exe.exists() { return Err("whisper-cli.exe не найден".to_string()); }
+        if !exe.exists() { return Err(format!("whisper-cli не найден: {}", exe.display())); }
         if self.model_path.is_empty() { return Err("Модель не загружена".to_string()); }
 
         let pcm = resample_to_16khz(samples, self.input_rate);
@@ -285,7 +299,7 @@ impl WhisperEngine {
     // === Server ===
     fn transcribe_server(&self, samples: &[f32]) -> Result<String, String> {
         let exe = server_exe();
-        if !exe.exists() { return Err("whisper-server.exe не найден".to_string()); }
+        if !exe.exists() { return Err(format!("whisper-server не найден: {}", exe.display())); }
 
         self.ensure_server(&exe)?;
 
@@ -326,11 +340,17 @@ impl WhisperEngine {
     fn ensure_server(&self, exe: &Path) -> Result<(), String> {
         if self.is_server_alive() { return Ok(()); }
 
-        // Убиваем старые процессы с ожиданием — чтобы порт освободился
+        // Убиваем старые копии whisper-server на порту 8178
+        #[cfg(target_os = "windows")]
         let _ = Command::new("taskkill")
             .args(["/f", "/im", "whisper-server.exe"])
             .stdout(Stdio::null()).stderr(Stdio::null())
-            .spawn().map(|mut c| c.wait());
+            .spawn().map(|mut c| { let _ = c.wait(); });
+        #[cfg(not(target_os = "windows"))]
+        let _ = Command::new("killall")
+            .arg("whisper-server")
+            .stdout(Stdio::null()).stderr(Stdio::null())
+            .spawn().map(|mut c| { let _ = c.wait(); });
 
         log::info!("Server: запуск {}", exe.display());
         if self.model_path.is_empty() { return Err("Модель не задана".to_string()); }

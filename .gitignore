@@ -13,3 +13,8 @@ AGENTS.md
 TECHNICAL_SPECIFICATION.md
 /bins/
 .arch/
+/models/
+*.app
+/dicts/ru_words_utf8.txt
+/dicts/russian.txt
+/dicts/russian_surnames.txt

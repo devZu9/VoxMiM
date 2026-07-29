@@ -13,6 +13,7 @@ mod ui;
 mod vad;
 
 use config::Config;
+#[cfg(target_os = "windows")]
 use std::sync::atomic::AtomicIsize;
 
 #[cfg(target_os = "windows")]
@@ -71,18 +72,20 @@ fn init_logger(config: &Config) {
 }
 
 fn main() {
-    // Panic hook — показывает консоль и выводит ошибку перед падением
+    // Panic hook
     std::panic::set_hook(Box::new(|info| {
+        #[cfg(target_os = "windows")]
         unsafe {
             unsafe extern "system" {
                 fn GetConsoleWindow() -> isize;
                 fn ShowWindow(hWnd: *mut std::ffi::c_void, nCmdShow: i32) -> i32;
             }
             let hwnd = GetConsoleWindow() as *mut std::ffi::c_void;
-            if !hwnd.is_null() { ShowWindow(hwnd, 5); /* SW_SHOW */ }
+            if !hwnd.is_null() { ShowWindow(hwnd, 5); }
         }
         log::error!("PANIC: {info}");
-        eprintln!("VoxMiM упала. Лог: logs/voxmim_debug.log");
+        eprintln!("VoxMiM упала. Лог: logs/voxmim.log");
+        #[cfg(target_os = "windows")]
         let _ = std::io::stdin().read_line(&mut String::new());
     }));
 
@@ -92,7 +95,6 @@ fn main() {
 
     init_logger(&config);
 
-    // Named Pipe — слушаем сигналы перезагрузки настроек
     pipe::start_listener();
 
     if !single_instance() {
@@ -106,8 +108,23 @@ fn main() {
     log::info!("VoxMiM v{}", env!("CARGO_PKG_VERSION"));
     log::info!("Конфиг загружен: {:?}", config);
 
-    let app = app::App::new(config);
-    app.run();
+    #[cfg(target_os = "macos")]
+    {
+        let app = app::App::new(config);
+        std::thread::Builder::new()
+            .name("app".into())
+            .spawn(move || {
+                app.run();
+            })
+            .ok();
+        crate::ui::tray::run_tray_main();
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let app = app::App::new(config);
+        app.run();
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -144,7 +161,34 @@ fn single_instance() -> bool {
     }
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "macos")]
+fn single_instance() -> bool {
+    let lock_dir = dirs_lock_path();
+    let _ = std::fs::create_dir_all(&lock_dir);
+    let lock_file = lock_dir.join("voxmim.lock");
+    match std::fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&lock_file)
+    {
+        Ok(_) => true,
+        Err(e) => {
+            log::error!("Другой экземпляр VoxMiM уже запущен ({e})");
+            false
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn dirs_lock_path() -> std::path::PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+    std::path::PathBuf::from(home)
+        .join("Library")
+        .join("Application Support")
+        .join("VoxMiM")
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
 fn single_instance() -> bool {
     true
 }

@@ -75,13 +75,14 @@ impl App {
         // Локализация — до трея, чтобы меню читало правильные строки
         lang::load_locale(&config.language);
 
-        // Трей — запускаем сразу с иконкой загрузки
+        // Трей
         let recording = Arc::new(AtomicBool::new(false));
         let ready = Arc::new(AtomicBool::new(false));
+        let tray_rec = recording.clone();
+        let tray_ready = ready.clone();
+        #[cfg(not(target_os = "macos"))]
         {
             let tray_tx = cmd_tx.clone();
-            let tray_rec = recording.clone();
-            let tray_ready = ready.clone();
             std::thread::Builder::new()
                 .name("tray".into())
                 .spawn(move || {
@@ -89,6 +90,10 @@ impl App {
                     tray.run();
                 })
                 .ok();
+        }
+        #[cfg(target_os = "macos")]
+        {
+            let _tray = TrayManager::new(cmd_tx.clone(), tray_rec, tray_ready);
         }
 
         let mut executor = CommandExecutor::new();
@@ -497,6 +502,10 @@ impl App {
         }
     }
 
+    pub fn cmd_tx(&self) -> crossbeam_channel::Sender<AppCommand> {
+        self.cmd_tx.clone()
+    }
+
     pub fn run(mut self) {
         log::info!("VoxMiM запущен");
         loop {
@@ -608,10 +617,11 @@ impl App {
             }
         }
         // Запускаем отдельное приложение настроек
+        let settings_name = if cfg!(target_os = "windows") { "voxmim-settings.exe" } else { "voxmim-settings" };
         let settings_exe = std::env::current_exe()
             .ok()
-            .and_then(|p| p.parent().map(|p| p.join("voxmim-settings.exe")))
-            .unwrap_or_else(|| std::path::PathBuf::from("voxmim-settings.exe"));
+            .and_then(|p| p.parent().map(|p| p.join(settings_name)))
+            .unwrap_or_else(|| std::path::PathBuf::from(settings_name));
         if settings_exe.exists() {
             match std::process::Command::new(&settings_exe).spawn() {
                 Ok(child) => {
@@ -623,6 +633,30 @@ impl App {
         }
     }
 
+    fn open_editor(path: &std::path::Path) -> Result<(), std::io::Error> {
+        #[cfg(target_os = "windows")]
+        {
+            std::process::Command::new("notepad.exe")
+                .arg(path)
+                .spawn()
+                .map(|_| ())
+        }
+        #[cfg(target_os = "macos")]
+        {
+            std::process::Command::new("open")
+                .args(["-a", "TextEdit", path.to_str().unwrap_or("")])
+                .spawn()
+                .map(|_| ())
+        }
+        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+        {
+            std::process::Command::new("xdg-open")
+                .arg(path)
+                .spawn()
+                .map(|_| ())
+        }
+    }
+
     fn on_edit_hall_dict(&self) {
         let path = crate::config::dicts_path().join("hallucinations.txt");
         if !path.exists() {
@@ -631,9 +665,9 @@ impl App {
                 return;
             }
         }
-        match std::process::Command::new("notepad.exe").arg(&path).spawn() {
-            Ok(_) => log::info!("Открыт hallucinations.txt в блокноте"),
-            Err(e) => log::error!("Не удалось открыть блокнот: {e}"),
+        match Self::open_editor(&path) {
+            Ok(_) => log::info!("Открыт hallucinations.txt в редакторе"),
+            Err(e) => log::error!("Не удалось открыть редактор: {e}"),
         }
     }
 
@@ -649,9 +683,9 @@ impl App {
                 return;
             }
         }
-        match std::process::Command::new("notepad.exe").arg(&path).spawn() {
-            Ok(_) => log::info!("Открыт user_dict.json в блокноте"),
-            Err(e) => log::error!("Не удалось открыть блокнот: {e}"),
+        match Self::open_editor(&path) {
+            Ok(_) => log::info!("Открыт user_dict.json в редакторе"),
+            Err(e) => log::error!("Не удалось открыть редактор: {e}"),
         }
     }
 

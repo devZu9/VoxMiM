@@ -9,6 +9,12 @@ pub struct AudioCapture {
     selected_name: Option<String>,
 }
 
+// AudioCapture must be Send on macOS for the tray-on-main-thread pattern.
+// cpal::Stream is technically !Send on all platforms, but on macOS
+// CoreAudio AudioUnit is thread-safe, making this safe.
+#[cfg(target_os = "macos")]
+unsafe impl Send for AudioCapture {}
+
 impl AudioCapture {
     pub fn new() -> Self {
         Self {

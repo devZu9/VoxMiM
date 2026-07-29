@@ -130,18 +130,30 @@ impl Default for Config {
         let models = models_dir();
         let dicts = dicts_dir();
 
+        #[cfg(target_os = "windows")]
         let known_models = [
             r"C:\_workPortable\WhisperCpp\models\ggml-large-v3-russian.bin",
             r"C:\_workPortable\WhisperCpp\models\ggml-large-v3-turbo-q8_0.bin",
             r"C:\_workPortable\WhisperCpp\models\ggml-medium-q8_0.bin",
         ];
+        #[cfg(not(target_os = "windows"))]
+        let known_models: [&str; 0] = [];
+
         let model_path = known_models.iter()
             .find(|p| std::path::Path::new(p).exists())
             .map(|p| std::path::PathBuf::from(p))
             .unwrap_or_else(|| models.join("ggml-tiny.bin"));
 
+        #[cfg(target_os = "windows")]
         let has_cuda = std::path::Path::new(r"C:\_workPortable\WhisperCpp\bins\cu-bin-blas12.4\ggml-cuda.dll").exists();
+        #[cfg(not(target_os = "windows"))]
+        let has_cuda = false;
         let detector_default = model_path.clone();
+
+        #[cfg(target_os = "windows")]
+        let default_keyboard = Some("ctrl+insert".to_string());
+        #[cfg(target_os = "macos")]
+        let default_keyboard = Some("cmd+escape".to_string());
 
         Self {
             mic_name: None,
@@ -152,7 +164,7 @@ impl Default for Config {
             threads: 0,
             trigger: TriggerConfig {
                 button: TriggerButton::Keyboard,
-                keyboard: Some("ctrl+insert".to_string()),
+                keyboard: default_keyboard,
             },
             vad: VadConfig {
                 enabled: false,
@@ -236,11 +248,15 @@ impl Config {
         };
 
         if !cfg.model_path.exists() {
+            #[cfg(target_os = "windows")]
             let fallbacks = [
                 r"C:\_workPortable\WhisperCpp\models\ggml-large-v3-russian.bin",
                 r"C:\_workPortable\WhisperCpp\models\ggml-large-v3-turbo-q8_0.bin",
                 r"C:\_workPortable\WhisperCpp\models\ggml-medium-q8_0.bin",
             ];
+            #[cfg(not(target_os = "windows"))]
+            let fallbacks: [&str; 0] = [];
+
             if let Some(found) = fallbacks.iter().find(|p| std::path::Path::new(p).exists()) {
                 log::info!("Модель найдена: {found}");
                 cfg.model_path = std::path::PathBuf::from(found);
@@ -248,10 +264,14 @@ impl Config {
         }
 
         if !cfg.detector_model.exists() {
+            #[cfg(target_os = "windows")]
             let detector_fallbacks = [
                 r"C:\_workPortable\WhisperCpp\models\ggml-small-q8_0.bin",
                 r"C:\_workPortable\WhisperCpp\models\ggml-medium-q8_0.bin",
             ];
+            #[cfg(not(target_os = "windows"))]
+            let detector_fallbacks: [&str; 0] = [];
+
             if let Some(found) = detector_fallbacks.iter().find(|p| std::path::Path::new(p).exists()) {
                 log::info!("Детектор: {found}");
                 cfg.detector_model = std::path::PathBuf::from(found);
