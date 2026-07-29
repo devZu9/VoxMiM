@@ -166,17 +166,26 @@ fn single_instance() -> bool {
     let lock_dir = dirs_lock_path();
     let _ = std::fs::create_dir_all(&lock_dir);
     let lock_file = lock_dir.join("voxmim.lock");
-    match std::fs::OpenOptions::new()
-        .create_new(true)
-        .write(true)
-        .open(&lock_file)
-    {
-        Ok(_) => true,
-        Err(e) => {
-            log::error!("Другой экземпляр VoxMiM уже запущен ({e})");
-            false
+
+    // Check if existing PID is still alive
+    if let Ok(old) = std::fs::read_to_string(&lock_file) {
+        if let Ok(pid) = old.trim().parse::<i32>() {
+            let alive = std::process::Command::new("kill")
+                .arg("-0").arg(pid.to_string())
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false);
+            if alive {
+                log::error!("Другой экземпляр VoxMiM уже запущен (PID={})", pid);
+                return false;
+            }
+            // stale PID, lock file будет перезаписан
         }
     }
+
+    std::fs::write(&lock_file, format!("{}", std::process::id()))
+        .map_err(|e| log::error!("Lock-файл: {e}"))
+        .is_ok()
 }
 
 #[cfg(target_os = "macos")]

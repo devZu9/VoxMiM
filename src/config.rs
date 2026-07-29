@@ -13,7 +13,23 @@ fn dicts_dir() -> PathBuf {
 }
 
 pub fn models_dir() -> PathBuf {
-    exe_dir().join("models")
+    let from_exe = exe_dir().join("models");
+    if from_exe.exists() {
+        return from_exe;
+    }
+    // macOS: also check project root models/ (../ from target/release/)
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(parent) = exe_dir().parent() {
+            if let Some(project) = parent.parent() {
+                let project_models = project.join("models");
+                if project_models.exists() {
+                    return project_models;
+                }
+            }
+        }
+    }
+    from_exe
 }
 
 fn bins_dir() -> PathBuf {
@@ -142,7 +158,21 @@ impl Default for Config {
         let model_path = known_models.iter()
             .find(|p| std::path::Path::new(p).exists())
             .map(|p| std::path::PathBuf::from(p))
-            .unwrap_or_else(|| models.join("ggml-tiny.bin"));
+            .unwrap_or_else(|| {
+                let m = models_dir().join("ggml-tiny.bin");
+                if !m.exists() {
+                    // search for any .bin file in models dir
+                    if let Ok(rd) = std::fs::read_dir(models_dir()) {
+                        for entry in rd.flatten() {
+                            let name = entry.file_name().to_string_lossy().to_string();
+                            if name.ends_with(".bin") {
+                                return entry.path();
+                            }
+                        }
+                    }
+                }
+                m
+            });
 
         #[cfg(target_os = "windows")]
         let has_cuda = std::path::Path::new(r"C:\_workPortable\WhisperCpp\bins\cu-bin-blas12.4\ggml-cuda.dll").exists();

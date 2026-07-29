@@ -1,27 +1,34 @@
 #!/bin/bash
-set -e
+
+PROJECT="$(cd "$(dirname "$0")/.." && pwd)"
+BINARY="$PROJECT/target/release/voxmim"
+APP="$PROJECT/VoxMiM.app"
 
 echo "=== VoxMiM: Настройка прав macOS ==="
 echo ""
-echo "VoxMiM нужны два разрешения macOS:"
-echo ""
-echo "  1. Универсальный доступ (Accessibility)"
-echo "     → Системные настройки → Конфиденциальность → Универсальный доступ"
-echo "     → Добавьте Terminal.app (или VoxMiM.app)"
-echo ""
-echo "  2. Мониторинг ввода (Input Monitoring) — macOS 15+"
-echo "     → Системные настройки → Конфиденциальность → Мониторинг ввода"
-echo "     → Добавьте Terminal.app (или VoxMiM.app)"
-echo ""
-echo "Примечание: TCC-level permission для бинарника по пути:"
-BIN_PATH=$(cd "$(dirname "$0")/.." && pwd)/target/release/voxmim
-if [ -f "$BIN_PATH" ]; then
-    echo "  $BIN_PATH"
-    echo "  (Это может облегчить добавление — перетащите файл в окно настроек)"
-    echo ""
-    echo "Можно открыть панель настроек одной командой:"
-    echo "  open 'x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility'"
+
+if [ ! -f "$BINARY" ]; then
+    echo "Сначала собери проект: bash scripts/make-app.sh"
+    echo "Файл $BINARY не найден."
+    exit 1
 fi
+
+echo "VoxMiM использует shell-скрипт, который запускает бинарник:"
+echo "  $BINARY"
 echo ""
-echo "После предоставления прав — перезапустите VoxMiM."
+echo "Добавь в разрешения именно ЭТОТ файл, а не VoxMiM.app:"
+echo ""
+echo "  Шаг 1: Системные настройки → Конфиденциальность → Универсальный доступ"
+echo "  Шаг 2: Нажми '+' (плюс)"
+echo "  Шаг 3: Нажни Cmd+Shift+G и вставь:"
+echo "    $BINARY"
+echo "  Шаг 4: Открыть → поставить галочку"
+echo ""
+echo "  Шаг 5: Системные настройки → Конфиденциальность → Мониторинг ввода"
+echo "  Шаг 6: Нажми '+' → Cmd+Shift+G → вставь тот же путь → Открыть → галочка"
+echo ""
+echo "  ИЛИ просто открой папку и перетащи файл мышкой в окно настроек:"
+echo "    open '$PROJECT/target/release/'"
+echo ""
+echo "После этого VoxMiM можно запускать из Dock."
 echo ""
