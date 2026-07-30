@@ -351,7 +351,7 @@ fn show_input_dialog(
         origin: NSPoint { x: 300.0, y: 300.0 },
         size: objc2_foundation::NSSize { width: w, height: h },
     };
-    let mask: u64 = (1 << 0) | (1 << 1); // titled | closable (без nonactivating)
+    let mask: u64 = (1 << 0) | (1 << 1) | (1 << 7); // titled | closable | nonactivating
 
     let panel: *mut NSPanel = unsafe {
         let p: *mut NSPanel = msg_send![NSPanel::class(), alloc];
@@ -393,6 +393,8 @@ fn show_input_dialog(
     DLG_IS_HALL.with_borrow_mut(|h| *h = is_hall);
 
     let _: () = unsafe { msg_send![panel, makeKeyAndOrderFront: std::ptr::null::<NSObject>()] };
+    let _: () = unsafe { msg_send![panel, setHidesOnDeactivate: false] };
+    let _: () = unsafe { msg_send![panel, setBecomesKeyOnlyIfNeeded: false] };
     log::info!("Dialog: показана");
 }
 
@@ -438,20 +440,23 @@ fn build_menu(handler: &MenuHandler, mtm: MainThreadMarker) -> (Retained<NSMenu>
     let add_word = unsafe {
         NSMenuItem::initWithTitle_action_keyEquivalent(
             NSMenuItem::alloc(mtm), &ns_string(&crate::lang::t("tray.menu.add_word")),
-            Some(sel!(handleAddWord:)), &ns_string(""),
+            None, &ns_string(""),
         )
     };
     let _: () = unsafe { msg_send![&add_word, setTarget: handler] };
+    let _: () = unsafe { msg_send![&add_word, setAction: sel!(handleAddWord:)] };
     menu.addItem(&add_word);
+    log::info!("DIAG: add_word menu item created");
 
     // Редактировать словарь
     let edit_dict = unsafe {
         NSMenuItem::initWithTitle_action_keyEquivalent(
             NSMenuItem::alloc(mtm), &ns_string(&crate::lang::t("tray.menu.edit_dict")),
-            Some(sel!(handleEditDict:)), &ns_string(""),
+            None, &ns_string(""),
         )
     };
     let _: () = unsafe { msg_send![&edit_dict, setTarget: handler] };
+    let _: () = unsafe { msg_send![&edit_dict, setAction: sel!(handleEditDict:)] };
     menu.addItem(&edit_dict);
     menu.addItem(&NSMenuItem::separatorItem(mtm));
 
@@ -459,20 +464,23 @@ fn build_menu(handler: &MenuHandler, mtm: MainThreadMarker) -> (Retained<NSMenu>
     let add_hall = unsafe {
         NSMenuItem::initWithTitle_action_keyEquivalent(
             NSMenuItem::alloc(mtm), &ns_string(&crate::lang::t("tray.menu.add_hall")),
-            Some(sel!(handleAddHall:)), &ns_string(""),
+            None, &ns_string(""),
         )
     };
     let _: () = unsafe { msg_send![&add_hall, setTarget: handler] };
+    let _: () = unsafe { msg_send![&add_hall, setAction: sel!(handleAddHall:)] };
     menu.addItem(&add_hall);
+    log::info!("DIAG: add_hall menu item created");
 
     // Редактировать галлюцинации
     let edit_hall = unsafe {
         NSMenuItem::initWithTitle_action_keyEquivalent(
             NSMenuItem::alloc(mtm), &ns_string(&crate::lang::t("tray.menu.edit_hall")),
-            Some(sel!(handleEditHall:)), &ns_string(""),
+            None, &ns_string(""),
         )
     };
     let _: () = unsafe { msg_send![&edit_hall, setTarget: handler] };
+    let _: () = unsafe { msg_send![&edit_hall, setAction: sel!(handleEditHall:)] };
     menu.addItem(&edit_hall);
     menu.addItem(&NSMenuItem::separatorItem(mtm));
 
@@ -559,6 +567,17 @@ pub fn run_tray_main() {
 
     let handler = MenuHandler::new(mtm);
     *DLG_HANDLER.lock().unwrap() = Some(SendPtr(&*handler as *const _ as *mut _));
+
+    // Диагностика: проверяем что селекторы зарегистрированы
+    unsafe {
+        let to_bool = |x: i8| -> bool { x != 0 };
+        let a1: i8 = msg_send![&*handler, respondsToSelector: sel!(handleAddWord:)];
+        let a2: i8 = msg_send![&*handler, respondsToSelector: sel!(handleEditDict:)];
+        let a3: i8 = msg_send![&*handler, respondsToSelector: sel!(handleDlgAdd:)];
+        log::info!("DIAG: respondsToSelector | handleAddWord:{} editDict:{} dlgAdd:{}",
+            to_bool(a1), to_bool(a2), to_bool(a3));
+    }
+
     let (menu, vad_item, wake_item) = build_menu(&handler, mtm);
 
     let status_item = NSStatusBar::systemStatusBar().statusItemWithLength(-1.0);

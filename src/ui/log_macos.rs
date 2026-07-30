@@ -35,9 +35,11 @@ pub fn toggle(mtm: MainThreadMarker) {
             let _: () = unsafe { msg_send![ptr, orderOut: std::ptr::null::<NSObject>()] };
         }
     } else {
-        let panel = PANEL.with_borrow(|p| *p);
-        if let Some(ptr) = panel {
-            let _: () = unsafe { msg_send![ptr, makeKeyAndOrderFront: std::ptr::null::<NSObject>()] };
+        let panel = PANEL.with_borrow(|p| p.clone());
+        if let Some(panel) = panel {
+            let _: () = unsafe { msg_send![&*panel, makeKeyAndOrderFront: None::<&NSObject>] };
+            let _: () = unsafe { msg_send![&*panel, setHidesOnDeactivate: false] };
+            let _: () = unsafe { msg_send![&*panel, setBecomesKeyOnlyIfNeeded: false] };
             return;
         }
 
@@ -46,7 +48,7 @@ pub fn toggle(mtm: MainThreadMarker) {
             size: objc2_foundation::NSSize { width: 650.0, height: 500.0 },
         };
 
-        let mask: u64 = (1 << 0) | (1 << 1) | (1 << 2) | (1 << 3);
+        let mask: u64 = (1 << 0) | (1 << 1) | (1 << 2) | (1 << 3) | (1 << 7);
 
         let panel: *mut NSPanel = unsafe {
             let p: *mut NSPanel = msg_send![NSPanel::class(), alloc];
@@ -85,7 +87,10 @@ pub fn toggle(mtm: MainThreadMarker) {
         let _ = read_new_lines();
 
         let _: () = unsafe { msg_send![panel, makeKeyAndOrderFront: std::ptr::null::<NSObject>()] };
+        let _: () = unsafe { msg_send![panel, setHidesOnDeactivate: false] };
+        let _: () = unsafe { msg_send![panel, setBecomesKeyOnlyIfNeeded: false] };
         IS_OPEN.store(true, Ordering::SeqCst);
+        log::info!("LogWindow: показана");
     }
 }
 
