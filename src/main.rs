@@ -56,36 +56,34 @@ fn init_logger(config: &Config) {
             target = record.target(), args = record.args())
     });
 
+    // session.log — всегда (для LogWindow)
+    let log_dir = config
+        .log_dir
+        .clone()
+        .unwrap_or_else(config::logs_dir);
+    let _ = std::fs::create_dir_all(&log_dir);
+    let session_path = log_dir.join("session.log");
+    let mut log_files: Vec<std::sync::Arc<std::sync::Mutex<std::fs::File>>> = Vec::new();
+    if let Ok(file) = std::fs::File::create(&session_path) {
+        log_files.push(std::sync::Arc::new(std::sync::Mutex::new(file)));
+        log::info!("Лог сессии: {}", session_path.display());
+    }
+
+    // voxmim.log — только если включено (полная история)
     if config.log_enabled {
-        let dir = config
-            .log_dir
-            .clone()
-            .unwrap_or_else(config::logs_dir);
-        let _ = std::fs::create_dir_all(&dir);
-
-        let mut files: Vec<std::sync::Arc<std::sync::Mutex<std::fs::File>>> = Vec::new();
-
-        // session.log — truncate, только текущая сессия
-        let session_path = dir.join("session.log");
-        if let Ok(file) = std::fs::File::create(&session_path) {
-            files.push(std::sync::Arc::new(std::sync::Mutex::new(file)));
-            log::info!("Лог сессии: {}", session_path.display());
-        }
-
-        // voxmim.log — append, полная история
-        let history_path = dir.join("voxmim.log");
+        let history_path = log_dir.join("voxmim.log");
         if let Ok(file) = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
             .open(&history_path)
         {
-            files.push(std::sync::Arc::new(std::sync::Mutex::new(file)));
+            log_files.push(std::sync::Arc::new(std::sync::Mutex::new(file)));
             log::info!("Лог полный: {}", history_path.display());
         }
+    }
 
-        if !files.is_empty() {
-            builder.target(env_logger::Target::Pipe(Box::new(TeeWriter { files })));
-        }
+    if !log_files.is_empty() {
+        builder.target(env_logger::Target::Pipe(Box::new(TeeWriter { files: log_files })));
     }
 
     let _ = builder.try_init();

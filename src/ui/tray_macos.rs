@@ -83,6 +83,7 @@ struct TickCtx {
     wake_item: Retained<NSMenuItem>,
     mtm: MainThreadMarker,
     blink: bool,
+    start_time: std::time::Instant,
 }
 
 thread_local! {
@@ -169,7 +170,7 @@ define_class!(
                     c.vad_item.setState(if VAD_ON.load(Ordering::SeqCst) { on } else { off });
                     c.wake_item.setState(if WAKE_ON.load(Ordering::SeqCst) { on } else { off });
 
-                    if recovering || !ready {
+                    if recovering || !ready || c.start_time.elapsed().as_secs() < 3 {
                         // Мигание: loading_img при blink, idle_img в паузе
                         let img = if c.blink { c.loading_img.as_ref() } else { c.idle_img.as_ref() };
                         if let Some(img) = img {
@@ -361,6 +362,7 @@ pub fn run_tray_main() {
             wake_item,
             mtm,
             blink: false,
+            start_time: std::time::Instant::now(),
         });
     });
 

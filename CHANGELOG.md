@@ -5,7 +5,17 @@
 Формат — [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 проект следует [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.10.5] — 2026-07-30
+## [0.10.6] — 2026-07-30
+
+### Исправлено
+
+- **LogWindow пуст.** `session.log` создаётся при каждом старте, независимо от `log_enabled`.
+- **config.json.** `log_enabled` исправлен с `false` на `true` — лог работает из коробки.
+- **Иконка загрузки при старте.** Первые 3 секунды мигает hourglass, даже если `ready` уже `true`.
+
+### Версии
+
+- **voxmim**: 0.10.5 → 0.10.6
 
 ### Исправлено
 
