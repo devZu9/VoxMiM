@@ -7,7 +7,7 @@ use objc2::{define_class, extern_methods, msg_send, sel, ClassType, MainThreadMa
 use objc2_app_kit::{
     NSApplication, NSApplicationActivationPolicy, NSButton, NSControlStateValue,
     NSControlStateValueOff, NSControlStateValueOn, NSImage, NSMenu, NSMenuItem, NSPanel,
-    NSStatusBar, NSStatusItem, NSTextField,
+    NSStatusBar, NSStatusItem, NSTextField, NSView,
 };
 use objc2_foundation::{NSData, NSPoint, NSRect, NSObject, NSTimer, NSString};
 
@@ -286,33 +286,40 @@ fn read_text_field(field: *mut NSTextField) -> Option<String> {
     Some(ns.to_string())
 }
 
-fn make_label(mtm: MainThreadMarker, panel: *mut NSPanel, x: f64, y: f64, w: f64, text: &NSString) {
-    let lbl: *mut NSTextField = unsafe { msg_send![NSTextField::class(), alloc] };
-    let _: () = unsafe { msg_send![lbl, initWithFrame: NSRect {
-        origin: NSPoint { x, y },
-        size: objc2_foundation::NSSize { width: w, height: 20.0 }
-    }] };
+fn make_label(panel: *mut NSPanel, x: f64, y: f64, w: f64, text: &NSString) {
+    let content: *mut NSView = unsafe { msg_send![panel, contentView] };
+    let lbl: *mut NSTextField = unsafe {
+        let l: *mut NSTextField = msg_send![NSTextField::class(), alloc];
+        msg_send![l, initWithFrame: NSRect {
+            origin: NSPoint { x, y },
+            size: objc2_foundation::NSSize { width: w, height: 20.0 }
+        }]
+    };
     let _: () = unsafe { msg_send![lbl, setStringValue: text] };
     let _: () = unsafe { msg_send![lbl, setBezeled: false] };
     let _: () = unsafe { msg_send![lbl, setDrawsBackground: false] };
     let _: () = unsafe { msg_send![lbl, setEditable: false] };
-    let _: () = unsafe { msg_send![panel, addSubview: lbl] };
+    let _: () = unsafe { msg_send![content, addSubview: lbl] };
 }
 
-fn make_field(mtm: MainThreadMarker, panel: *mut NSPanel, x: f64, y: f64, w: f64, h: f64) -> *mut NSTextField {
-    let f: *mut NSTextField = unsafe { msg_send![NSTextField::class(), alloc] };
-    let _: () = unsafe { msg_send![f, initWithFrame: NSRect {
-        origin: NSPoint { x, y },
-        size: objc2_foundation::NSSize { width: w, height: h }
-    }] };
+fn make_field(panel: *mut NSPanel, x: f64, y: f64, w: f64, h: f64) -> *mut NSTextField {
+    let content: *mut NSView = unsafe { msg_send![panel, contentView] };
+    let f: *mut NSTextField = unsafe {
+        let f_: *mut NSTextField = msg_send![NSTextField::class(), alloc];
+        msg_send![f_, initWithFrame: NSRect {
+            origin: NSPoint { x, y },
+            size: objc2_foundation::NSSize { width: w, height: h }
+        }]
+    };
     let _: () = unsafe { msg_send![f, setBezeled: true] };
     let _: () = unsafe { msg_send![f, setDrawsBackground: true] };
     let _: () = unsafe { msg_send![f, setEditable: true] };
-    let _: () = unsafe { msg_send![panel, addSubview: f] };
+    let _: () = unsafe { msg_send![content, addSubview: f] };
     f
 }
 
-fn make_button(mtm: MainThreadMarker, panel: *mut NSPanel, x: f64, y: f64, w: f64, h: f64, title: &NSString, target: *mut MenuHandler, action: Sel) {
+fn make_button(panel: *mut NSPanel, x: f64, y: f64, w: f64, h: f64, title: &NSString, target: &MenuHandler, action: Sel) {
+    let content: *mut NSView = unsafe { msg_send![panel, contentView] };
     let btn: *mut NSButton = unsafe { msg_send![NSButton::class(), alloc] };
     let _: () = unsafe { msg_send![btn, initWithFrame: NSRect {
         origin: NSPoint { x, y },
@@ -321,7 +328,7 @@ fn make_button(mtm: MainThreadMarker, panel: *mut NSPanel, x: f64, y: f64, w: f6
     let _: () = unsafe { msg_send![btn, setTitle: title] };
     let _: () = unsafe { msg_send![btn, setTarget: target] };
     let _: () = unsafe { msg_send![btn, setAction: action] };
-    let _: () = unsafe { msg_send![panel, addSubview: btn] };
+    let _: () = unsafe { msg_send![content, addSubview: btn] };
 }
 
 fn show_input_dialog(
@@ -333,6 +340,7 @@ fn show_input_dialog(
     is_hall: bool,
 ) {
     let mtm = match MainThreadMarker::new() { Some(m) => m, None => return };
+    log::info!("Dialog: создаю \"{}\"", title.to_string());
 
     let w: f64 = 400.0;
     let h: f64 = if label2.len() > 0 { 200.0 } else { 160.0 };
@@ -346,30 +354,29 @@ fn show_input_dialog(
         let p: *mut NSPanel = msg_send![NSPanel::class(), alloc];
         msg_send![p, initWithContentRect: rect styleMask: mask backing: 2 defer: 0]
     };
+    if panel.is_null() { log::warn!("Dialog: panel nil"); return; }
     let _: () = unsafe { msg_send![panel, setTitle: title] };
     let _: () = unsafe { msg_send![panel, setFloatingPanel: true] };
     let _: () = unsafe { msg_send![panel, setReleasedWhenClosed: false] };
+    let _: () = unsafe { msg_send![panel, setLevel: 3i64] }; // NSFloatingWindowLevel
 
-    // Label 1
-    make_label(mtm, panel, 16.0, h - 48.0, 140.0, label1);
-
-    // Field 1
-    let field1 = make_field(mtm, panel, 16.0, h - 72.0, 360.0, 22.0);
+    make_label(panel, 16.0, h - 48.0, 140.0, label1);
+    let field1 = make_field(panel, 16.0, h - 72.0, 360.0, 22.0);
     let _: () = unsafe { msg_send![panel, makeFirstResponder: field1] };
 
-    // Label 2 + Field 2 (only for non-hall)
     let field2: *mut NSTextField;
     if label2.len() > 0 {
-        make_label(mtm, panel, 16.0, h - 100.0, 140.0, label2);
-        field2 = make_field(mtm, panel, 16.0, h - 124.0, 360.0, 22.0);
+        make_label(panel, 16.0, h - 100.0, 140.0, label2);
+        field2 = make_field(panel, 16.0, h - 124.0, 360.0, 22.0);
     } else {
         field2 = field1;
     }
 
-    let handler = DLG_HANDLER.lock().unwrap().as_ref().copied().map(|s| s.0);
+    let handler = DLG_HANDLER.lock().unwrap().as_ref().copied()
+        .map(|s| unsafe { &*(s.0 as *const MenuHandler) });
     if let Some(h) = handler {
-        make_button(mtm, panel, 16.0, 10.0, 100.0, 28.0, add_title, h, sel!(handleDlgAdd:));
-        make_button(mtm, panel, 126.0, 10.0, 100.0, 28.0, cancel_title, h, sel!(handleDlgCancel:));
+        make_button(panel, 16.0, 10.0, 100.0, 28.0, add_title, h, sel!(handleDlgAdd:));
+        make_button(panel, 126.0, 10.0, 100.0, 28.0, cancel_title, h, sel!(handleDlgCancel:));
     }
 
     DLG_PANEL.with_borrow_mut(|p| *p = Some(panel));
@@ -378,6 +385,7 @@ fn show_input_dialog(
     DLG_IS_HALL.with_borrow_mut(|h| *h = is_hall);
 
     let _: () = unsafe { msg_send![panel, makeKeyAndOrderFront: std::ptr::null::<NSObject>()] };
+    log::info!("Dialog: показана");
 }
 
 fn ns_string(s: &str) -> Retained<NSString> {
