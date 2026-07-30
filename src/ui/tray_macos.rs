@@ -275,14 +275,12 @@ pub fn run_tray_main() {
 
     let app = NSApplication::sharedApplication(mtm);
     app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
-    app.finishLaunching();
 
     let handler = MenuHandler::new(mtm);
     let menu = build_menu(&handler, mtm);
 
     let status_item = NSStatusBar::systemStatusBar().statusItemWithLength(-1.0);
     status_item.setAutosaveName(Some(&ns_string("VoxMiM")));
-    status_item.setLength(30.0);
     status_item.setMenu(Some(&menu));
 
     log::info!("Tray: macOS status item created");
@@ -293,6 +291,8 @@ pub fn run_tray_main() {
     }
     let idle_img = make_image(icon_data(false, false));
     let rec_img = make_image(icon_data(false, true));
+
+    app.finishLaunching();
 
     let mut prev_ready = false;
     let mut prev_recording = false;
