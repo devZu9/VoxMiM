@@ -282,6 +282,7 @@ pub fn run_tray_main() {
 
     let status_item = NSStatusBar::systemStatusBar().statusItemWithLength(-1.0);
     status_item.setBehavior(NSStatusItemBehavior::RemovalAllowed);
+    status_item.setAutosaveName(Some(&ns_string("VoxMiM")));
     status_item.setMenu(Some(&menu));
 
     log::info!("Tray: macOS status item created");
