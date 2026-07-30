@@ -3,7 +3,7 @@ members = [".", "settings"]
 
 [package]
 name = "voxmim"
-version = "0.9.6"
+version = "0.10.11"
 edition = "2024"
 description = "Голосовой ввод текста на Rust. На основе идей VoxBee с исправлением разорванных слов."
 license = "MIT"
@@ -21,6 +21,17 @@ cpal = "0.15"
 # whisper-rs = "0.16"
 regex = "1"
 # tray-icon = "0.24" — заменён на win32 API в ui/tray.rs
+enigo = "0.6"
+rdev = "0.5"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+crossbeam-channel = "0.5"
+image = "0.25"
+log = "0.4"
+env_logger = "0.11"
+chrono = "0.4"
+
+[target.'cfg(target_os = "windows")'.dependencies]
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
     "Win32_System_Com",
@@ -37,18 +48,16 @@ windows-sys = { version = "0.59", features = [
     "Win32_UI_Shell_Common",
     "Win32_Globalization",
     "Win32_Storage_FileSystem",
-]} 
-enigo = "0.6"
-rdev = "0.5"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-crossbeam-channel = "0.5"
-image = "0.25"
-log = "0.4"
-env_logger = "0.11"
-chrono = "0.4"
+]}
 
-[build-dependencies]
+[target.'cfg(target_os = "macos")'.dependencies]
+core-foundation = "0.10"
+core-graphics = "0.24"
+objc2 = "0.6"
+objc2-foundation = "0.3"
+objc2-app-kit = "0.3"
+
+[target.'cfg(target_os = "windows")'.build-dependencies]
 embed-resource = "3.0"
 
 [profile.release]

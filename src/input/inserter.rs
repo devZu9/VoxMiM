@@ -361,7 +361,65 @@ impl TextInserter {
             win32::restore_clipboard(&saved);
         }
 
-        #[cfg(not(target_os = "windows"))]
+        #[cfg(target_os = "macos")]
+        {
+            use std::io::Write;
+            use std::process::Command;
+            use std::sync::Mutex;
+            static INS_LOCK: Mutex<()> = Mutex::new(());
+            let _lock = INS_LOCK.lock().unwrap();
+
+            let saved = {
+                let output = Command::new("pbpaste").output();
+                output.ok().map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+            };
+
+            let mut child = Command::new("pbcopy")
+                .stdin(std::process::Stdio::piped())
+                .spawn();
+            if let Ok(mut child) = child {
+                let _ = child.stdin.take().unwrap().write_all(text.as_bytes());
+                let _ = child.wait();
+            }
+
+            // Send Cmd+V via CGEventPost
+            use core_graphics::event::{CGEvent, CGEventTapLocation, CGEventFlags};
+            use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
+
+            let source = match CGEventSource::new(CGEventSourceStateID::CombinedSessionState) {
+                Ok(s) => s,
+                Err(()) => {
+                    log::error!("CGEventSource failed");
+                    return;
+                }
+            };
+
+            let keycode = 0x09u16; // kVK_ANSI_V
+            if let Ok(down) = CGEvent::new_keyboard_event(source.clone(), keycode, true) {
+                down.set_flags(CGEventFlags::CGEventFlagCommand);
+                down.post(CGEventTapLocation::HID);
+            }
+            if let Ok(up) = CGEvent::new_keyboard_event(source, keycode, false) {
+                up.set_flags(CGEventFlags::CGEventFlagCommand);
+                up.post(CGEventTapLocation::HID);
+            }
+
+            std::thread::sleep(std::time::Duration::from_millis(100));
+
+            if let Some(prev) = saved {
+                if !prev.is_empty() {
+                    if let Ok(mut child) = Command::new("pbcopy")
+                        .stdin(std::process::Stdio::piped())
+                        .spawn()
+                    {
+                        let _ = child.stdin.take().unwrap().write_all(prev.as_bytes());
+                        let _ = child.wait();
+                    }
+                }
+            }
+        }
+
+        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
         {
             let _ = text;
         }

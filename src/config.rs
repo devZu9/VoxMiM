@@ -13,7 +13,23 @@ fn dicts_dir() -> PathBuf {
 }
 
 pub fn models_dir() -> PathBuf {
-    exe_dir().join("models")
+    let from_exe = exe_dir().join("models");
+    if from_exe.exists() {
+        return from_exe;
+    }
+    // macOS: also check project root models/ (../ from target/release/)
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(parent) = exe_dir().parent() {
+            if let Some(project) = parent.parent() {
+                let project_models = project.join("models");
+                if project_models.exists() {
+                    return project_models;
+                }
+            }
+        }
+    }
+    from_exe
 }
 
 fn bins_dir() -> PathBuf {
@@ -130,18 +146,44 @@ impl Default for Config {
         let models = models_dir();
         let dicts = dicts_dir();
 
+        #[cfg(target_os = "windows")]
         let known_models = [
             r"C:\_workPortable\WhisperCpp\models\ggml-large-v3-russian.bin",
             r"C:\_workPortable\WhisperCpp\models\ggml-large-v3-turbo-q8_0.bin",
             r"C:\_workPortable\WhisperCpp\models\ggml-medium-q8_0.bin",
         ];
+        #[cfg(not(target_os = "windows"))]
+        let known_models: [&str; 0] = [];
+
         let model_path = known_models.iter()
             .find(|p| std::path::Path::new(p).exists())
             .map(|p| std::path::PathBuf::from(p))
-            .unwrap_or_else(|| models.join("ggml-tiny.bin"));
+            .unwrap_or_else(|| {
+                let m = models_dir().join("ggml-tiny.bin");
+                if !m.exists() {
+                    // search for any .bin file in models dir
+                    if let Ok(rd) = std::fs::read_dir(models_dir()) {
+                        for entry in rd.flatten() {
+                            let name = entry.file_name().to_string_lossy().to_string();
+                            if name.ends_with(".bin") {
+                                return entry.path();
+                            }
+                        }
+                    }
+                }
+                m
+            });
 
+        #[cfg(target_os = "windows")]
         let has_cuda = std::path::Path::new(r"C:\_workPortable\WhisperCpp\bins\cu-bin-blas12.4\ggml-cuda.dll").exists();
+        #[cfg(not(target_os = "windows"))]
+        let has_cuda = false;
         let detector_default = model_path.clone();
+
+        #[cfg(target_os = "windows")]
+        let default_keyboard = Some("ctrl+insert".to_string());
+        #[cfg(target_os = "macos")]
+        let default_keyboard = Some("cmd+escape".to_string());
 
         Self {
             mic_name: None,
@@ -152,7 +194,7 @@ impl Default for Config {
             threads: 0,
             trigger: TriggerConfig {
                 button: TriggerButton::Keyboard,
-                keyboard: Some("ctrl+insert".to_string()),
+                keyboard: default_keyboard,
             },
             vad: VadConfig {
                 enabled: false,
@@ -236,11 +278,15 @@ impl Config {
         };
 
         if !cfg.model_path.exists() {
+            #[cfg(target_os = "windows")]
             let fallbacks = [
                 r"C:\_workPortable\WhisperCpp\models\ggml-large-v3-russian.bin",
                 r"C:\_workPortable\WhisperCpp\models\ggml-large-v3-turbo-q8_0.bin",
                 r"C:\_workPortable\WhisperCpp\models\ggml-medium-q8_0.bin",
             ];
+            #[cfg(not(target_os = "windows"))]
+            let fallbacks: [&str; 0] = [];
+
             if let Some(found) = fallbacks.iter().find(|p| std::path::Path::new(p).exists()) {
                 log::info!("Модель найдена: {found}");
                 cfg.model_path = std::path::PathBuf::from(found);
@@ -248,10 +294,14 @@ impl Config {
         }
 
         if !cfg.detector_model.exists() {
+            #[cfg(target_os = "windows")]
             let detector_fallbacks = [
                 r"C:\_workPortable\WhisperCpp\models\ggml-small-q8_0.bin",
                 r"C:\_workPortable\WhisperCpp\models\ggml-medium-q8_0.bin",
             ];
+            #[cfg(not(target_os = "windows"))]
+            let detector_fallbacks: [&str; 0] = [];
+
             if let Some(found) = detector_fallbacks.iter().find(|p| std::path::Path::new(p).exists()) {
                 log::info!("Детектор: {found}");
                 cfg.detector_model = std::path::PathBuf::from(found);
