@@ -5,7 +5,7 @@ use objc2::rc::{autoreleasepool, Retained};
 use objc2::{define_class, extern_methods, msg_send, sel, ClassType, MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{
     NSApplication, NSApplicationActivationPolicy, NSImage, NSMenu, NSMenuItem, NSStatusBar,
-    NSStatusItem, NSStatusItemBehavior,
+    NSStatusItem,
 };
 use objc2_foundation::{NSData, NSDate, NSObject, NSRunLoop, NSString};
 
@@ -281,8 +281,8 @@ pub fn run_tray_main() {
     let menu = build_menu(&handler, mtm);
 
     let status_item = NSStatusBar::systemStatusBar().statusItemWithLength(-1.0);
-    status_item.setBehavior(NSStatusItemBehavior::RemovalAllowed);
     status_item.setAutosaveName(Some(&ns_string("VoxMiM")));
+    status_item.setLength(30.0);
     status_item.setMenu(Some(&menu));
 
     log::info!("Tray: macOS status item created");
