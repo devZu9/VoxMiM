@@ -131,6 +131,16 @@ define_class!(
             send_cmd(AppCommand::EditHallDict);
         }
 
+        #[unsafe(method(handleAddWord:))]
+        fn handle_add_word(&self, _sender: &NSObject) {
+            show_add_word_dialog();
+        }
+
+        #[unsafe(method(handleAddHall:))]
+        fn handle_add_hall(&self, _sender: &NSObject) {
+            show_add_hall_dialog();
+        }
+
         #[unsafe(method(handleQuit:))]
         fn handle_quit(&self, _sender: &NSObject) {
             send_cmd(AppCommand::Quit);
@@ -202,6 +212,16 @@ fn send_cmd(cmd: AppCommand) {
     }
 }
 
+fn show_add_word_dialog() {
+    // Открывает файл словаря для ручного добавления (аналог EditUserDict)
+    send_cmd(AppCommand::EditUserDict);
+}
+
+fn show_add_hall_dialog() {
+    // Открывает файл галлюцинаций для ручного добавления
+    send_cmd(AppCommand::EditHallDict);
+}
+
 fn ns_string(s: &str) -> Retained<NSString> {
     NSString::from_str(s)
 }
@@ -246,6 +266,25 @@ fn build_menu(handler: &MenuHandler, mtm: MainThreadMarker) -> (Retained<NSMenu>
     };
     let _: () = unsafe { msg_send![&edit_hall, setTarget: handler] };
     menu.addItem(&edit_hall);
+
+    let add_word = unsafe {
+        NSMenuItem::initWithTitle_action_keyEquivalent(
+            NSMenuItem::alloc(mtm), &ns_string(&crate::lang::t("tray.menu.add_word")),
+            Some(sel!(handleAddWord:)), &ns_string(""),
+        )
+    };
+    let _: () = unsafe { msg_send![&add_word, setTarget: handler] };
+    menu.addItem(&add_word);
+
+    let add_hall = unsafe {
+        NSMenuItem::initWithTitle_action_keyEquivalent(
+            NSMenuItem::alloc(mtm), &ns_string(&crate::lang::t("tray.menu.add_hall")),
+            Some(sel!(handleAddHall:)), &ns_string(""),
+        )
+    };
+    let _: () = unsafe { msg_send![&add_hall, setTarget: handler] };
+    menu.addItem(&add_hall);
+
     menu.addItem(&NSMenuItem::separatorItem(mtm));
 
     let vad_item = unsafe {
