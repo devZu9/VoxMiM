@@ -248,6 +248,17 @@ impl App {
                     // ── retry pending ──
                     let pp = pending_path();
                     if pp.exists() {
+                        // Удаляем старый pending (старше 5 минут)
+                        let is_stale = std::fs::metadata(&pp).ok()
+                            .and_then(|m| m.modified().ok())
+                            .and_then(|t| t.elapsed().ok())
+                            .map(|e| e.as_secs() > 300)
+                            .unwrap_or(false);
+                        if is_stale {
+                            log::info!("Pending: старше 5 минут, удалён");
+                            let _ = std::fs::remove_file(&pp);
+                            crate::ui::tray::set_recovering(false);
+                        } else {
                         log::info!("Pending: найден {}", pp.display());
                         crate::ui::tray::set_recovering(true);
 
@@ -305,6 +316,7 @@ impl App {
                                     crate::ui::tray::set_recovering(false);
                                     break;
                                 }
+                            }
                             }
                         }
                     }

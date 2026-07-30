@@ -25,7 +25,7 @@ fn log_path() -> std::path::PathBuf {
         .and_then(|p| p.parent().map(|p| p.to_path_buf()))
         .unwrap_or_else(|| std::path::PathBuf::from("."))
         .join("logs")
-        .join("voxmim.log")
+        .join("session.log")
 }
 
 pub fn toggle(mtm: MainThreadMarker) {

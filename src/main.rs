@@ -20,17 +20,25 @@ use std::sync::atomic::AtomicIsize;
 pub static CONSOLE_HWND: AtomicIsize = AtomicIsize::new(0);
 
 struct TeeWriter {
-    file: std::sync::Arc<std::sync::Mutex<std::fs::File>>,
+    files: Vec<std::sync::Arc<std::sync::Mutex<std::fs::File>>>,
 }
 
 impl std::io::Write for TeeWriter {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         let _ = std::io::stdout().write(buf);
-        self.file.lock().unwrap().write(buf)
+        for f in &self.files {
+            let mut f = f.lock().unwrap();
+            let _ = f.write(buf);
+            let _ = f.flush();
+        }
+        Ok(buf.len())
     }
     fn flush(&mut self) -> std::io::Result<()> {
         let _ = std::io::stdout().flush();
-        self.file.lock().unwrap().flush()
+        for f in &self.files {
+            let _ = f.lock().unwrap().flush();
+        }
+        Ok(())
     }
 }
 
@@ -54,17 +62,29 @@ fn init_logger(config: &Config) {
             .clone()
             .unwrap_or_else(config::logs_dir);
         let _ = std::fs::create_dir_all(&dir);
-        let path = dir.join("voxmim.log");
+
+        let mut files: Vec<std::sync::Arc<std::sync::Mutex<std::fs::File>>> = Vec::new();
+
+        // session.log — truncate, только текущая сессия
+        let session_path = dir.join("session.log");
+        if let Ok(file) = std::fs::File::create(&session_path) {
+            files.push(std::sync::Arc::new(std::sync::Mutex::new(file)));
+            log::info!("Лог сессии: {}", session_path.display());
+        }
+
+        // voxmim.log — append, полная история
+        let history_path = dir.join("voxmim.log");
         if let Ok(file) = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
-            .open(&path)
+            .open(&history_path)
         {
-            let writer = TeeWriter {
-                file: std::sync::Arc::new(std::sync::Mutex::new(file)),
-            };
-            builder.target(env_logger::Target::Pipe(Box::new(writer)));
-            log::info!("Лог-файл: {}", path.display());
+            files.push(std::sync::Arc::new(std::sync::Mutex::new(file)));
+            log::info!("Лог полный: {}", history_path.display());
+        }
+
+        if !files.is_empty() {
+            builder.target(env_logger::Target::Pipe(Box::new(TeeWriter { files })));
         }
     }
 
