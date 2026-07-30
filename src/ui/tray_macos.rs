@@ -1,13 +1,14 @@
+use std::cell::RefCell;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use objc2::rc::{autoreleasepool, Retained};
+use objc2::rc::Retained;
 use objc2::{define_class, extern_methods, msg_send, sel, ClassType, MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{
     NSApplication, NSApplicationActivationPolicy, NSImage, NSMenu, NSMenuItem, NSStatusBar,
     NSStatusItem,
 };
-use objc2_foundation::{NSData, NSDate, NSObject, NSRunLoop, NSString};
+use objc2_foundation::{NSData, NSObject, NSTimer, NSString};
 
 use crate::app::AppCommand;
 
@@ -71,6 +72,24 @@ pub(crate) fn icon_from_bytes(_data: &[u8]) -> *mut std::ffi::c_void {
     std::ptr::null_mut()
 }
 
+// ── Tick context (main-thread only) ──
+
+struct TickCtx {
+    item: Retained<NSStatusItem>,
+    loading_img: Option<Retained<NSImage>>,
+    idle_img: Option<Retained<NSImage>>,
+    rec_img: Option<Retained<NSImage>>,
+    mtm: MainThreadMarker,
+    prev_ready: bool,
+    prev_recording: bool,
+}
+
+thread_local! {
+    static TICK: RefCell<Option<TickCtx>> = const { RefCell::new(None) };
+}
+
+// ── MenuHandler ──
+
 define_class!(
     #[unsafe(super(NSObject))]
     #[thread_kind = MainThreadOnly]
@@ -119,6 +138,44 @@ define_class!(
                 app.terminate(None);
             }
         }
+
+        #[unsafe(method(tick:))]
+        fn tick(&self, _timer: &NSTimer) {
+            TICK.with_borrow_mut(|ctx| {
+                if let Some(ref mut c) = *ctx {
+                    let state = TRAY_STATE.lock().unwrap();
+                    let ready = state.as_ref().map(|s| s.ready.load(Ordering::SeqCst)).unwrap_or(false);
+                    let recording = state.as_ref().map(|s| s.recording.load(Ordering::SeqCst)).unwrap_or(false);
+                    let recovering = TRAY_RECOVERING.load(Ordering::SeqCst);
+                    drop(state);
+
+                    if TRAY_SHOULD_EXIT.load(Ordering::SeqCst) {
+                        return;
+                    }
+
+                    if recovering {
+                        if let Some(ref img) = c.loading_img {
+                            update_icon(&c.item, img, c.mtm);
+                        }
+                        c.prev_ready = false;
+                        c.prev_recording = false;
+                    } else if ready != c.prev_ready || recording != c.prev_recording {
+                        let img = if !ready {
+                            c.loading_img.as_ref()
+                        } else if recording {
+                            c.rec_img.as_ref()
+                        } else {
+                            c.idle_img.as_ref()
+                        };
+                        if let Some(img) = img {
+                            update_icon(&c.item, img, c.mtm);
+                        }
+                        c.prev_ready = ready;
+                        c.prev_recording = recording;
+                    }
+                }
+            });
+        }
     }
 );
 
@@ -145,36 +202,27 @@ fn build_menu(handler: &MenuHandler, mtm: MainThreadMarker) -> Retained<NSMenu> 
     let ver = format!("VoxMiM v{}", env!("CARGO_PKG_VERSION"));
     let ver_item = unsafe {
         NSMenuItem::initWithTitle_action_keyEquivalent(
-            NSMenuItem::alloc(mtm),
-            &ns_string(&ver),
-            None,
-            &ns_string(""),
+            NSMenuItem::alloc(mtm), &ns_string(&ver), None, &ns_string(""),
         )
     };
     ver_item.setEnabled(false);
     menu.addItem(&ver_item);
-
     menu.addItem(&NSMenuItem::separatorItem(mtm));
 
     let settings_item = unsafe {
         NSMenuItem::initWithTitle_action_keyEquivalent(
-            NSMenuItem::alloc(mtm),
-            &ns_string(&crate::lang::t("tray.menu.settings")),
-            Some(sel!(handleSettings:)),
-            &ns_string(""),
+            NSMenuItem::alloc(mtm), &ns_string(&crate::lang::t("tray.menu.settings")),
+            Some(sel!(handleSettings:)), &ns_string(""),
         )
     };
     let _: () = unsafe { msg_send![&settings_item, setTarget: handler] };
     menu.addItem(&settings_item);
-
     menu.addItem(&NSMenuItem::separatorItem(mtm));
 
     let edit_dict = unsafe {
         NSMenuItem::initWithTitle_action_keyEquivalent(
-            NSMenuItem::alloc(mtm),
-            &ns_string(&crate::lang::t("tray.menu.edit_dict")),
-            Some(sel!(handleEditDict:)),
-            &ns_string(""),
+            NSMenuItem::alloc(mtm), &ns_string(&crate::lang::t("tray.menu.edit_dict")),
+            Some(sel!(handleEditDict:)), &ns_string(""),
         )
     };
     let _: () = unsafe { msg_send![&edit_dict, setTarget: handler] };
@@ -182,23 +230,18 @@ fn build_menu(handler: &MenuHandler, mtm: MainThreadMarker) -> Retained<NSMenu> 
 
     let edit_hall = unsafe {
         NSMenuItem::initWithTitle_action_keyEquivalent(
-            NSMenuItem::alloc(mtm),
-            &ns_string(&crate::lang::t("tray.menu.edit_hall")),
-            Some(sel!(handleEditHall:)),
-            &ns_string(""),
+            NSMenuItem::alloc(mtm), &ns_string(&crate::lang::t("tray.menu.edit_hall")),
+            Some(sel!(handleEditHall:)), &ns_string(""),
         )
     };
     let _: () = unsafe { msg_send![&edit_hall, setTarget: handler] };
     menu.addItem(&edit_hall);
-
     menu.addItem(&NSMenuItem::separatorItem(mtm));
 
     let vad_item = unsafe {
         NSMenuItem::initWithTitle_action_keyEquivalent(
-            NSMenuItem::alloc(mtm),
-            &ns_string(&crate::lang::t("tray.menu.auto_stop")),
-            Some(sel!(handleVadToggle:)),
-            &ns_string(""),
+            NSMenuItem::alloc(mtm), &ns_string(&crate::lang::t("tray.menu.auto_stop")),
+            Some(sel!(handleVadToggle:)), &ns_string(""),
         )
     };
     let _: () = unsafe { msg_send![&vad_item, setTarget: handler] };
@@ -206,10 +249,8 @@ fn build_menu(handler: &MenuHandler, mtm: MainThreadMarker) -> Retained<NSMenu> 
 
     let wake_item = unsafe {
         NSMenuItem::initWithTitle_action_keyEquivalent(
-            NSMenuItem::alloc(mtm),
-            &ns_string(&crate::lang::t("tray.menu.voice_activation")),
-            Some(sel!(handleWakeToggle:)),
-            &ns_string(""),
+            NSMenuItem::alloc(mtm), &ns_string(&crate::lang::t("tray.menu.voice_activation")),
+            Some(sel!(handleWakeToggle:)), &ns_string(""),
         )
     };
     let _: () = unsafe { msg_send![&wake_item, setTarget: handler] };
@@ -217,23 +258,18 @@ fn build_menu(handler: &MenuHandler, mtm: MainThreadMarker) -> Retained<NSMenu> 
 
     let math_item = unsafe {
         NSMenuItem::initWithTitle_action_keyEquivalent(
-            NSMenuItem::alloc(mtm),
-            &ns_string(&crate::lang::t("tray.menu.math_mode")),
-            Some(sel!(handleMathMode:)),
-            &ns_string(""),
+            NSMenuItem::alloc(mtm), &ns_string(&crate::lang::t("tray.menu.math_mode")),
+            Some(sel!(handleMathMode:)), &ns_string(""),
         )
     };
     let _: () = unsafe { msg_send![&math_item, setTarget: handler] };
     menu.addItem(&math_item);
-
     menu.addItem(&NSMenuItem::separatorItem(mtm));
 
     let quit_item = unsafe {
         NSMenuItem::initWithTitle_action_keyEquivalent(
-            NSMenuItem::alloc(mtm),
-            &ns_string(&crate::lang::t("tray.menu.quit")),
-            Some(sel!(handleQuit:)),
-            &ns_string(""),
+            NSMenuItem::alloc(mtm), &ns_string(&crate::lang::t("tray.menu.quit")),
+            Some(sel!(handleQuit:)), &ns_string(""),
         )
     };
     let _: () = unsafe { msg_send![&quit_item, setTarget: handler] };
@@ -283,8 +319,6 @@ pub fn run_tray_main() {
     status_item.setAutosaveName(Some(&ns_string("VoxMiM")));
     status_item.setMenu(Some(&menu));
 
-    log::info!("Tray: macOS status item created");
-
     let loading_img = make_image(icon_data(true, false));
     if let Some(ref img) = loading_img {
         update_icon(&status_item, img, mtm);
@@ -292,53 +326,25 @@ pub fn run_tray_main() {
     let idle_img = make_image(icon_data(false, false));
     let rec_img = make_image(icon_data(false, true));
 
-    app.finishLaunching();
+    log::info!("Tray: macOS status item created");
 
-    let mut prev_ready = false;
-    let mut prev_recording = false;
-
-    loop {
-        autoreleasepool(|_| {
-            if TRAY_SHOULD_EXIT.load(Ordering::SeqCst) {
-                return;
-            }
-
-            let state = TRAY_STATE.lock().unwrap();
-            let ready = state
-                .as_ref()
-                .map(|s| s.ready.load(Ordering::SeqCst))
-                .unwrap_or(false);
-            let recording = state
-                .as_ref()
-                .map(|s| s.recording.load(Ordering::SeqCst))
-                .unwrap_or(false);
-            let recovering = TRAY_RECOVERING.load(Ordering::SeqCst);
-            drop(state);
-
-            if recovering {
-                if let Some(ref img) = loading_img {
-                    update_icon(&status_item, img, mtm);
-                }
-                prev_ready = false;
-                prev_recording = false;
-            } else if ready != prev_ready || recording != prev_recording {
-                let img = if !ready {
-                    loading_img.as_ref()
-                } else if recording {
-                    rec_img.as_ref()
-                } else {
-                    idle_img.as_ref()
-                };
-                if let Some(img) = img {
-                    update_icon(&status_item, img, mtm);
-                }
-                prev_ready = ready;
-                prev_recording = recording;
-            }
-
-            let rl = NSRunLoop::currentRunLoop();
-            let until = NSDate::dateWithTimeIntervalSinceNow(0.3);
-            rl.runUntilDate(&until);
+    TICK.with_borrow_mut(|c| {
+        *c = Some(TickCtx {
+            item: status_item,
+            loading_img,
+            idle_img,
+            rec_img,
+            mtm,
+            prev_ready: false,
+            prev_recording: false,
         });
-    }
+    });
+
+    // NSTimer fires tick: every 0.3s on the main run loop
+    let _: Retained<NSTimer> = unsafe {
+        msg_send![NSTimer::class(), scheduledTimerWithTimeInterval: 0.3, target: &*handler, selector: sel!(tick:), userInfo: None::<&NSObject>, repeats: true]
+    };
+
+    app.finishLaunching();
+    app.run();
 }
