@@ -3,12 +3,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use objc2::rc::Retained;
-use objc2::{define_class, extern_methods, msg_send, sel, ClassType, MainThreadMarker, MainThreadOnly};
+use objc2::{define_class, extern_methods, msg_send, sel, ClassType, MainThreadMarker, MainThreadOnly, runtime::Sel};
 use objc2_app_kit::{
-    NSApplication, NSApplicationActivationPolicy, NSControlStateValue, NSControlStateValueOff,
-    NSControlStateValueOn, NSImage, NSMenu, NSMenuItem, NSStatusBar, NSStatusItem,
+    NSApplication, NSApplicationActivationPolicy, NSButton, NSControlStateValue,
+    NSControlStateValueOff, NSControlStateValueOn, NSImage, NSMenu, NSMenuItem, NSPanel,
+    NSStatusBar, NSStatusItem, NSTextField,
 };
-use objc2_foundation::{NSData, NSObject, NSTimer, NSString};
+use objc2_foundation::{NSData, NSPoint, NSRect, NSObject, NSTimer, NSString};
 
 use crate::app::AppCommand;
 
@@ -72,7 +73,20 @@ pub(crate) fn icon_from_bytes(_data: &[u8]) -> *mut std::ffi::c_void {
     std::ptr::null_mut()
 }
 
-// ── Tick context (main-thread only) ──
+// ── Dialog context ──
+
+#[derive(Copy, Clone)]
+struct SendPtr(*mut MenuHandler);
+unsafe impl Send for SendPtr {}
+unsafe impl std::marker::Sync for SendPtr {}
+
+thread_local! {
+    static DLG_PANEL: RefCell<Option<*mut NSPanel>> = const { RefCell::new(None) };
+    static DLG_FIELD1: RefCell<Option<*mut NSTextField>> = const { RefCell::new(None) };
+    static DLG_FIELD2: RefCell<Option<*mut NSTextField>> = const { RefCell::new(None) };
+    static DLG_IS_HALL: RefCell<bool> = const { RefCell::new(false) };
+}
+static DLG_HANDLER: std::sync::Mutex<Option<SendPtr>> = std::sync::Mutex::new(None);
 
 struct TickCtx {
     item: Retained<NSStatusItem>,
@@ -133,12 +147,65 @@ define_class!(
 
         #[unsafe(method(handleAddWord:))]
         fn handle_add_word(&self, _sender: &NSObject) {
-            show_add_word_dialog();
+            show_input_dialog(
+                &ns_string(&crate::lang::t("dialog.add_word.title")),
+                &ns_string(&crate::lang::t("dialog.add_word.label_wrong")),
+                &ns_string(&crate::lang::t("dialog.add_word.label_correct")),
+                &ns_string(&crate::lang::t("dialog.add_word.add")),
+                &ns_string(&crate::lang::t("dialog.add_word.cancel")),
+                false,
+            );
         }
 
         #[unsafe(method(handleAddHall:))]
         fn handle_add_hall(&self, _sender: &NSObject) {
-            show_add_hall_dialog();
+            show_input_dialog(
+                &ns_string(&crate::lang::t("dialog.add_hall.title")),
+                &ns_string(&crate::lang::t("dialog.add_hall.label")),
+                &ns_string(""),
+                &ns_string(&crate::lang::t("dialog.add_word.add")),
+                &ns_string(&crate::lang::t("dialog.add_word.cancel")),
+                true,
+            );
+        }
+
+        #[unsafe(method(handleDlgAdd:))]
+        fn handle_dlg_add(&self, _sender: &NSObject) {
+            DLG_PANEL.with_borrow(|p| {
+                if let Some(panel) = *p {
+                    let label2 = DLG_FIELD2.with_borrow(|f| f.and_then(|ptr| read_text_field(ptr)));
+                    let is_hall = DLG_IS_HALL.with_borrow(|h| *h);
+
+                    if is_hall {
+                        if let Some(phrase) = label2 {
+                            send_cmd(AppCommand::AddHallEntry { phrase });
+                        }
+                    } else {
+                        let label1 = DLG_FIELD1.with_borrow(|f| f.and_then(|ptr| read_text_field(ptr)));
+                        if let (Some(wrong), Some(correct)) = (label1, label2) {
+                            if !wrong.is_empty() && !correct.is_empty() {
+                                send_cmd(AppCommand::AddUserEntry { wrong, correct });
+                            }
+                        }
+                    }
+                    let _: () = unsafe { msg_send![panel, close] };
+                    DLG_PANEL.with_borrow_mut(|p| *p = None);
+                    DLG_FIELD1.with_borrow_mut(|f| *f = None);
+                    DLG_FIELD2.with_borrow_mut(|f| *f = None);
+                }
+            });
+        }
+
+        #[unsafe(method(handleDlgCancel:))]
+        fn handle_dlg_cancel(&self, _sender: &NSObject) {
+            DLG_PANEL.with_borrow(|p| {
+                if let Some(panel) = *p {
+                    let _: () = unsafe { msg_send![panel, close] };
+                }
+            });
+            DLG_PANEL.with_borrow_mut(|p| *p = None);
+            DLG_FIELD1.with_borrow_mut(|f| *f = None);
+            DLG_FIELD2.with_borrow_mut(|f| *f = None);
         }
 
         #[unsafe(method(handleQuit:))]
@@ -212,14 +279,105 @@ fn send_cmd(cmd: AppCommand) {
     }
 }
 
-fn show_add_word_dialog() {
-    // Открывает файл словаря для ручного добавления (аналог EditUserDict)
-    send_cmd(AppCommand::EditUserDict);
+fn read_text_field(field: *mut NSTextField) -> Option<String> {
+    let ptr: *mut objc2_foundation::NSString = unsafe { msg_send![field, stringValue] };
+    if ptr.is_null() { return None; }
+    let ns = unsafe { &*ptr as &objc2_foundation::NSString };
+    Some(ns.to_string())
 }
 
-fn show_add_hall_dialog() {
-    // Открывает файл галлюцинаций для ручного добавления
-    send_cmd(AppCommand::EditHallDict);
+fn make_label(mtm: MainThreadMarker, panel: *mut NSPanel, x: f64, y: f64, w: f64, text: &NSString) {
+    let lbl: *mut NSTextField = unsafe { msg_send![NSTextField::class(), alloc] };
+    let _: () = unsafe { msg_send![lbl, initWithFrame: NSRect {
+        origin: NSPoint { x, y },
+        size: objc2_foundation::NSSize { width: w, height: 20.0 }
+    }] };
+    let _: () = unsafe { msg_send![lbl, setStringValue: text] };
+    let _: () = unsafe { msg_send![lbl, setBezeled: false] };
+    let _: () = unsafe { msg_send![lbl, setDrawsBackground: false] };
+    let _: () = unsafe { msg_send![lbl, setEditable: false] };
+    let _: () = unsafe { msg_send![panel, addSubview: lbl] };
+}
+
+fn make_field(mtm: MainThreadMarker, panel: *mut NSPanel, x: f64, y: f64, w: f64, h: f64) -> *mut NSTextField {
+    let f: *mut NSTextField = unsafe { msg_send![NSTextField::class(), alloc] };
+    let _: () = unsafe { msg_send![f, initWithFrame: NSRect {
+        origin: NSPoint { x, y },
+        size: objc2_foundation::NSSize { width: w, height: h }
+    }] };
+    let _: () = unsafe { msg_send![f, setBezeled: true] };
+    let _: () = unsafe { msg_send![f, setDrawsBackground: true] };
+    let _: () = unsafe { msg_send![f, setEditable: true] };
+    let _: () = unsafe { msg_send![panel, addSubview: f] };
+    f
+}
+
+fn make_button(mtm: MainThreadMarker, panel: *mut NSPanel, x: f64, y: f64, w: f64, h: f64, title: &NSString, target: *mut MenuHandler, action: Sel) {
+    let btn: *mut NSButton = unsafe { msg_send![NSButton::class(), alloc] };
+    let _: () = unsafe { msg_send![btn, initWithFrame: NSRect {
+        origin: NSPoint { x, y },
+        size: objc2_foundation::NSSize { width: w, height: h }
+    }] };
+    let _: () = unsafe { msg_send![btn, setTitle: title] };
+    let _: () = unsafe { msg_send![btn, setTarget: target] };
+    let _: () = unsafe { msg_send![btn, setAction: action] };
+    let _: () = unsafe { msg_send![panel, addSubview: btn] };
+}
+
+fn show_input_dialog(
+    title: &NSString,
+    label1: &NSString,
+    label2: &NSString,
+    add_title: &NSString,
+    cancel_title: &NSString,
+    is_hall: bool,
+) {
+    let mtm = match MainThreadMarker::new() { Some(m) => m, None => return };
+
+    let w: f64 = 400.0;
+    let h: f64 = if label2.len() > 0 { 200.0 } else { 160.0 };
+    let rect = NSRect {
+        origin: NSPoint { x: 300.0, y: 300.0 },
+        size: objc2_foundation::NSSize { width: w, height: h },
+    };
+    let mask: u64 = (1 << 0) | (1 << 1) | (1 << 7);
+
+    let panel: *mut NSPanel = unsafe {
+        let p: *mut NSPanel = msg_send![NSPanel::class(), alloc];
+        msg_send![p, initWithContentRect: rect styleMask: mask backing: 2 defer: 0]
+    };
+    let _: () = unsafe { msg_send![panel, setTitle: title] };
+    let _: () = unsafe { msg_send![panel, setFloatingPanel: true] };
+    let _: () = unsafe { msg_send![panel, setReleasedWhenClosed: false] };
+
+    // Label 1
+    make_label(mtm, panel, 16.0, h - 48.0, 140.0, label1);
+
+    // Field 1
+    let field1 = make_field(mtm, panel, 16.0, h - 72.0, 360.0, 22.0);
+    let _: () = unsafe { msg_send![panel, makeFirstResponder: field1] };
+
+    // Label 2 + Field 2 (only for non-hall)
+    let field2: *mut NSTextField;
+    if label2.len() > 0 {
+        make_label(mtm, panel, 16.0, h - 100.0, 140.0, label2);
+        field2 = make_field(mtm, panel, 16.0, h - 124.0, 360.0, 22.0);
+    } else {
+        field2 = field1;
+    }
+
+    let handler = DLG_HANDLER.lock().unwrap().as_ref().copied().map(|s| s.0);
+    if let Some(h) = handler {
+        make_button(mtm, panel, 16.0, 10.0, 100.0, 28.0, add_title, h, sel!(handleDlgAdd:));
+        make_button(mtm, panel, 126.0, 10.0, 100.0, 28.0, cancel_title, h, sel!(handleDlgCancel:));
+    }
+
+    DLG_PANEL.with_borrow_mut(|p| *p = Some(panel));
+    DLG_FIELD1.with_borrow_mut(|f| *f = Some(field1));
+    DLG_FIELD2.with_borrow_mut(|f| *f = if is_hall { Some(field1) } else { Some(field2) });
+    DLG_IS_HALL.with_borrow_mut(|h| *h = is_hall);
+
+    let _: () = unsafe { msg_send![panel, makeKeyAndOrderFront: std::ptr::null::<NSObject>()] };
 }
 
 fn ns_string(s: &str) -> Retained<NSString> {
@@ -239,6 +397,7 @@ fn build_menu(handler: &MenuHandler, mtm: MainThreadMarker) -> (Retained<NSMenu>
     menu.addItem(&ver_item);
     menu.addItem(&NSMenuItem::separatorItem(mtm));
 
+    // Настройки
     let settings_item = unsafe {
         NSMenuItem::initWithTitle_action_keyEquivalent(
             NSMenuItem::alloc(mtm), &ns_string(&crate::lang::t("tray.menu.settings")),
@@ -247,26 +406,19 @@ fn build_menu(handler: &MenuHandler, mtm: MainThreadMarker) -> (Retained<NSMenu>
     };
     let _: () = unsafe { msg_send![&settings_item, setTarget: handler] };
     menu.addItem(&settings_item);
+
+    // Показать лог
+    let log_item = unsafe {
+        NSMenuItem::initWithTitle_action_keyEquivalent(
+            NSMenuItem::alloc(mtm), &ns_string(&crate::lang::t("tray.menu.show_log")),
+            Some(sel!(handleShowLog:)), &ns_string(""),
+        )
+    };
+    let _: () = unsafe { msg_send![&log_item, setTarget: handler] };
+    menu.addItem(&log_item);
     menu.addItem(&NSMenuItem::separatorItem(mtm));
 
-    let edit_dict = unsafe {
-        NSMenuItem::initWithTitle_action_keyEquivalent(
-            NSMenuItem::alloc(mtm), &ns_string(&crate::lang::t("tray.menu.edit_dict")),
-            Some(sel!(handleEditDict:)), &ns_string(""),
-        )
-    };
-    let _: () = unsafe { msg_send![&edit_dict, setTarget: handler] };
-    menu.addItem(&edit_dict);
-
-    let edit_hall = unsafe {
-        NSMenuItem::initWithTitle_action_keyEquivalent(
-            NSMenuItem::alloc(mtm), &ns_string(&crate::lang::t("tray.menu.edit_hall")),
-            Some(sel!(handleEditHall:)), &ns_string(""),
-        )
-    };
-    let _: () = unsafe { msg_send![&edit_hall, setTarget: handler] };
-    menu.addItem(&edit_hall);
-
+    // Добавить слово
     let add_word = unsafe {
         NSMenuItem::initWithTitle_action_keyEquivalent(
             NSMenuItem::alloc(mtm), &ns_string(&crate::lang::t("tray.menu.add_word")),
@@ -276,6 +428,18 @@ fn build_menu(handler: &MenuHandler, mtm: MainThreadMarker) -> (Retained<NSMenu>
     let _: () = unsafe { msg_send![&add_word, setTarget: handler] };
     menu.addItem(&add_word);
 
+    // Редактировать словарь
+    let edit_dict = unsafe {
+        NSMenuItem::initWithTitle_action_keyEquivalent(
+            NSMenuItem::alloc(mtm), &ns_string(&crate::lang::t("tray.menu.edit_dict")),
+            Some(sel!(handleEditDict:)), &ns_string(""),
+        )
+    };
+    let _: () = unsafe { msg_send![&edit_dict, setTarget: handler] };
+    menu.addItem(&edit_dict);
+    menu.addItem(&NSMenuItem::separatorItem(mtm));
+
+    // Добавить галлюцинацию
     let add_hall = unsafe {
         NSMenuItem::initWithTitle_action_keyEquivalent(
             NSMenuItem::alloc(mtm), &ns_string(&crate::lang::t("tray.menu.add_hall")),
@@ -285,8 +449,18 @@ fn build_menu(handler: &MenuHandler, mtm: MainThreadMarker) -> (Retained<NSMenu>
     let _: () = unsafe { msg_send![&add_hall, setTarget: handler] };
     menu.addItem(&add_hall);
 
+    // Редактировать галлюцинации
+    let edit_hall = unsafe {
+        NSMenuItem::initWithTitle_action_keyEquivalent(
+            NSMenuItem::alloc(mtm), &ns_string(&crate::lang::t("tray.menu.edit_hall")),
+            Some(sel!(handleEditHall:)), &ns_string(""),
+        )
+    };
+    let _: () = unsafe { msg_send![&edit_hall, setTarget: handler] };
+    menu.addItem(&edit_hall);
     menu.addItem(&NSMenuItem::separatorItem(mtm));
 
+    // VAD
     let vad_item = unsafe {
         NSMenuItem::initWithTitle_action_keyEquivalent(
             NSMenuItem::alloc(mtm), &ns_string(&crate::lang::t("tray.menu.auto_stop")),
@@ -296,6 +470,7 @@ fn build_menu(handler: &MenuHandler, mtm: MainThreadMarker) -> (Retained<NSMenu>
     let _: () = unsafe { msg_send![&vad_item, setTarget: handler] };
     menu.addItem(&vad_item);
 
+    // Wake Word
     let wake_item = unsafe {
         NSMenuItem::initWithTitle_action_keyEquivalent(
             NSMenuItem::alloc(mtm), &ns_string(&crate::lang::t("tray.menu.voice_activation")),
@@ -305,6 +480,7 @@ fn build_menu(handler: &MenuHandler, mtm: MainThreadMarker) -> (Retained<NSMenu>
     let _: () = unsafe { msg_send![&wake_item, setTarget: handler] };
     menu.addItem(&wake_item);
 
+    // Math Mode
     let math_item = unsafe {
         NSMenuItem::initWithTitle_action_keyEquivalent(
             NSMenuItem::alloc(mtm), &ns_string(&crate::lang::t("tray.menu.math_mode")),
@@ -315,17 +491,7 @@ fn build_menu(handler: &MenuHandler, mtm: MainThreadMarker) -> (Retained<NSMenu>
     menu.addItem(&math_item);
     menu.addItem(&NSMenuItem::separatorItem(mtm));
 
-    let log_item = unsafe {
-        NSMenuItem::initWithTitle_action_keyEquivalent(
-            NSMenuItem::alloc(mtm), &ns_string(&crate::lang::t("tray.menu.show_log")),
-            Some(sel!(handleShowLog:)), &ns_string(""),
-        )
-    };
-    let _: () = unsafe { msg_send![&log_item, setTarget: handler] };
-    menu.addItem(&log_item);
-
-    menu.addItem(&NSMenuItem::separatorItem(mtm));
-
+    // Выход
     let quit_item = unsafe {
         NSMenuItem::initWithTitle_action_keyEquivalent(
             NSMenuItem::alloc(mtm), &ns_string(&crate::lang::t("tray.menu.quit")),
@@ -376,6 +542,7 @@ pub fn run_tray_main() {
     app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
 
     let handler = MenuHandler::new(mtm);
+    *DLG_HANDLER.lock().unwrap() = Some(SendPtr(&*handler as *const _ as *mut _));
     let (menu, vad_item, wake_item) = build_menu(&handler, mtm);
 
     let status_item = NSStatusBar::systemStatusBar().statusItemWithLength(-1.0);
