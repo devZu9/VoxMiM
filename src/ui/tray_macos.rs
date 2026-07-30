@@ -80,8 +80,7 @@ struct TickCtx {
     idle_img: Option<Retained<NSImage>>,
     rec_img: Option<Retained<NSImage>>,
     mtm: MainThreadMarker,
-    prev_ready: bool,
-    prev_recording: bool,
+    blink: bool,
 }
 
 thread_local! {
@@ -143,35 +142,29 @@ define_class!(
         fn tick(&self, _timer: &NSTimer) {
             TICK.with_borrow_mut(|ctx| {
                 if let Some(ref mut c) = *ctx {
+                    if TRAY_SHOULD_EXIT.load(Ordering::SeqCst) {
+                        return;
+                    }
+
                     let state = TRAY_STATE.lock().unwrap();
                     let ready = state.as_ref().map(|s| s.ready.load(Ordering::SeqCst)).unwrap_or(false);
                     let recording = state.as_ref().map(|s| s.recording.load(Ordering::SeqCst)).unwrap_or(false);
                     let recovering = TRAY_RECOVERING.load(Ordering::SeqCst);
                     drop(state);
 
-                    if TRAY_SHOULD_EXIT.load(Ordering::SeqCst) {
-                        return;
-                    }
+                    c.blink = !c.blink;
 
-                    if recovering {
-                        if let Some(ref img) = c.loading_img {
-                            update_icon(&c.item, img, c.mtm);
-                        }
-                        c.prev_ready = false;
-                        c.prev_recording = false;
-                    } else if ready != c.prev_ready || recording != c.prev_recording {
-                        let img = if !ready {
-                            c.loading_img.as_ref()
-                        } else if recording {
-                            c.rec_img.as_ref()
-                        } else {
-                            c.idle_img.as_ref()
-                        };
+                    if recovering || !ready {
+                        // Мигание: loading_img при blink, idle_img в паузе
+                        let img = if c.blink { c.loading_img.as_ref() } else { c.idle_img.as_ref() };
                         if let Some(img) = img {
                             update_icon(&c.item, img, c.mtm);
                         }
-                        c.prev_ready = ready;
-                        c.prev_recording = recording;
+                    } else {
+                        let img = if recording { c.rec_img.as_ref() } else { c.idle_img.as_ref() };
+                        if let Some(img) = img {
+                            update_icon(&c.item, img, c.mtm);
+                        }
                     }
                 }
             });
@@ -335,8 +328,7 @@ pub fn run_tray_main() {
             idle_img,
             rec_img,
             mtm,
-            prev_ready: false,
-            prev_recording: false,
+            blink: false,
         });
     });
 
