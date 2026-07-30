@@ -5,7 +5,19 @@
 Формат — [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 проект следует [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.10.9] — 2026-07-30
+## [0.10.10] — 2026-07-30
+
+### Исправлено
+
+- **Диалоги больше не падают.** `close` заменён на `orderOut:`, очистка ссылок вынесена из вложенных borrow.
+- **Enter теперь работает.** Кнопка «Добавить» получила `setKeyEquivalent: "\r"` — стандартное поведение macOS.
+- **Tab переключает поля.** Установлен `setNextKeyView:` между field1 и field2.
+- **Cmd+C / Cmd+V в диалогах.** Убран `NSNonactivatingPanelMask` из стиля окна.
+- **Контекстное меню на русском.** В Info.plist добавлено `CFBundleLocalizations: ru, en`.
+
+### Версии
+
+- **voxmim**: 0.10.9 → 0.10.10
 
 ### Исправлено
 

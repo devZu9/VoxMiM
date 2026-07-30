@@ -37,6 +37,11 @@ cat > "$APP_DIR/Contents/Info.plist" <<EOF
     <string>APPL</string>
     <key>LSUIElement</key>
     <true/>
+    <key>CFBundleLocalizations</key>
+    <array>
+        <string>ru</string>
+        <string>en</string>
+    </array>
 </dict>
 </plist>
 EOF

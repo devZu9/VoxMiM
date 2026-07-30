@@ -188,19 +188,20 @@ define_class!(
                             }
                         }
                     }
-                    let _: () = unsafe { msg_send![panel, close] };
-                    DLG_PANEL.with_borrow_mut(|p| *p = None);
-                    DLG_FIELD1.with_borrow_mut(|f| *f = None);
-                    DLG_FIELD2.with_borrow_mut(|f| *f = None);
+                    // orderOut — скрыть, не удалять. Потом очищаем ссылки
+                    let _: () = unsafe { msg_send![panel, orderOut: std::ptr::null::<NSObject>()] };
                 }
             });
+            DLG_PANEL.with_borrow_mut(|p| *p = None);
+            DLG_FIELD1.with_borrow_mut(|f| *f = None);
+            DLG_FIELD2.with_borrow_mut(|f| *f = None);
         }
 
         #[unsafe(method(handleDlgCancel:))]
         fn handle_dlg_cancel(&self, _sender: &NSObject) {
             DLG_PANEL.with_borrow(|p| {
                 if let Some(panel) = *p {
-                    let _: () = unsafe { msg_send![panel, close] };
+                    let _: () = unsafe { msg_send![panel, orderOut: std::ptr::null::<NSObject>()] };
                 }
             });
             DLG_PANEL.with_borrow_mut(|p| *p = None);
@@ -318,7 +319,7 @@ fn make_field(panel: *mut NSPanel, x: f64, y: f64, w: f64, h: f64) -> *mut NSTex
     f
 }
 
-fn make_button(panel: *mut NSPanel, x: f64, y: f64, w: f64, h: f64, title: &NSString, target: &MenuHandler, action: Sel) {
+fn make_button(panel: *mut NSPanel, x: f64, y: f64, w: f64, h: f64, title: &NSString, target: &MenuHandler, action: Sel) -> *mut NSButton {
     let content: *mut NSView = unsafe { msg_send![panel, contentView] };
     let btn: *mut NSButton = unsafe { msg_send![NSButton::class(), alloc] };
     let _: () = unsafe { msg_send![btn, initWithFrame: NSRect {
@@ -329,6 +330,7 @@ fn make_button(panel: *mut NSPanel, x: f64, y: f64, w: f64, h: f64, title: &NSSt
     let _: () = unsafe { msg_send![btn, setTarget: target] };
     let _: () = unsafe { msg_send![btn, setAction: action] };
     let _: () = unsafe { msg_send![content, addSubview: btn] };
+    btn
 }
 
 fn show_input_dialog(
@@ -348,7 +350,7 @@ fn show_input_dialog(
         origin: NSPoint { x: 300.0, y: 300.0 },
         size: objc2_foundation::NSSize { width: w, height: h },
     };
-    let mask: u64 = (1 << 0) | (1 << 1) | (1 << 7);
+    let mask: u64 = (1 << 0) | (1 << 1); // titled | closable (без nonactivating)
 
     let panel: *mut NSPanel = unsafe {
         let p: *mut NSPanel = msg_send![NSPanel::class(), alloc];
@@ -372,11 +374,16 @@ fn show_input_dialog(
         field2 = field1;
     }
 
+    // Tab-переход: field1 → field2 → field1
+    let _: () = unsafe { msg_send![field1, setNextKeyView: field2] };
+    let _: () = unsafe { msg_send![field2, setNextKeyView: field1] };
+
     let handler = DLG_HANDLER.lock().unwrap().as_ref().copied()
         .map(|s| unsafe { &*(s.0 as *const MenuHandler) });
     if let Some(h) = handler {
-        make_button(panel, 16.0, 10.0, 100.0, 28.0, add_title, h, sel!(handleDlgAdd:));
-        make_button(panel, 126.0, 10.0, 100.0, 28.0, cancel_title, h, sel!(handleDlgCancel:));
+        let add_btn = make_button(panel, 16.0, 10.0, 100.0, 28.0, add_title, h, sel!(handleDlgAdd:));
+        let _: () = unsafe { msg_send![add_btn, setKeyEquivalent: &*ns_string("\r")] };
+        let _ = make_button(panel, 126.0, 10.0, 100.0, 28.0, cancel_title, h, sel!(handleDlgCancel:));
     }
 
     DLG_PANEL.with_borrow_mut(|p| *p = Some(panel));
