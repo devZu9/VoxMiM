@@ -1,10 +1,14 @@
-# VoxMiM v0.10.0 — Итоговая сводка
+# VoxMiM v0.11.0 — Итоговая сводка
 
 ## Что сделано
 
 **VoxMiM** — голосовой ввод текста на Rust. Windows + macOS.
 
 > **v0.10.0:** Полный порт на macOS (M1 Pro). NSStatusBar-трей, CGEventTap (Cmd+Esc), pbcopy+Cmd+V, Unix socket IPC, platform splits. Исправлены dylib-зависимости whisper-server. Обе платформы собираются (cargo build —release 0 ошибок).
+>
+> **v0.10.1–12:** Багфиксы macOS — NSTimer, template-иконка, PID-stab, галочки VAD/Wake, LogWindow, DualWriter, session.log, диалоги «Добавить слово/галлюцинацию», Cmd+C/V, русское меню, setHidesOnDeactivate. Windows-фиксы (Mutex inserter, RMS silence check, pending age check).
+>
+> **v0.11.0:** Распознавание аудиофайлов (mp3/ogg/wav) через ffmpeg+whisper-cli — текст в курсор или субтитры .srt/.vtt. Выбор формата субтитров в настройках (вкладка «Прочее»).
 
 ### Рабочий процесс
 
@@ -18,6 +22,9 @@
 | Трей (меню-бар) | ✅ | NSStatusBar + NSMenu (objc2-app-kit 0.3) |
 | Глобальный хоткей | ✅ | CGEventTap (core-graphics) + CFRunLoop |
 | Вставка текста | ✅ | pbcopy/pbpaste + CGEventPost (Cmd+V) |
+| LogWindow | ✅ | NSPanel + NSTextView + NSScrollView |
+| Диалоги (словарь/галлюцинации) | ✅ | NSPanel, key equivalents, русское меню |
+| DualWriter логов | ✅ | session.log + voxmim.log, flush после записи |
 | Unix domain socket IPC | ✅ | вместо Named Pipe |
 | AudioCapture Send | ✅ | unsafe impl Send (CoreAudio thread-safe) |
 | NSApp lifecycle | ✅ | finishLaunching + autoreleasepool |
@@ -71,8 +78,8 @@ scripts/
 
 ### Версии
 
-- **voxmim**: 0.10.0 (macOS порт: трей, hotkey, вставка, platform splits, dylib-fix)
-- **voxmim-settings**: 1.3.0 (не портировано на macOS)
+- **voxmim**: 0.11.0 (аудиофайлы → текст/субтитры, macOS порт + багфиксы)
+- **voxmim-settings**: 1.4.0 (радио SRT/VTT, не портировано на macOS)
 
 ### Сборка
 
@@ -82,11 +89,15 @@ cargo check --release --target x86_64-pc-windows-msvc  # Windows (cross)
 bash scripts/make-app.sh                       # macOS .app bundle
 ```
 
-## Backlog
+## Что осталось
 
-- [ ] Трей-меню macOS — все пункты (настройки, VAD, словари, автозагрузка)
-- [ ] Уменьшение иконки (24→18px) + отступы
-- [ ] Settings IPC на macOS — полноценный диалог
-- [ ] VAD на macOS
-- [ ] Автозагрузка macOS (launchd plist)
-- [ ] Windows CI сборка
+- [ ] **Трей-меню macOS** — все пункты (настройки, VAD, словари, автозагрузка)
+- [ ] **Уменьшение иконки** — 24→18px + отступы
+- [ ] **Settings IPC на macOS** — полноценный диалог
+- [ ] **VAD на macOS** — проверить и донастроить
+- [ ] **Автозагрузка macOS** — launchd plist
+- [ ] **Путь к ffmpeg в настройках** — поле пути в VoxMiM Settings (сейчас из PATH)
+- [ ] **Обработка ошибок во всех модулях**
+- [ ] **Оптимизация:** ленивая загрузка, кэширование
+- [ ] **Интеграционное тестирование** (end-to-end)
+- [ ] **Windows CI сборка**

@@ -25,6 +25,8 @@ const CMD_ADD_WORD: u32 = 1005;
 const CMD_EDIT_DICT: u32 = 1006;
 const CMD_ADD_HALL: u32 = 1008;
 const CMD_EDIT_HALL: u32 = 1009;
+const CMD_TRANSCRIBE_FILE: u32 = 1010;
+const CMD_SUBTITLE_FILE: u32 = 1011;
 
 static TRAY_AUTOSTOP: AtomicBool = AtomicBool::new(false);
 static TRAY_WAKE: AtomicBool = AtomicBool::new(false);
@@ -350,6 +352,8 @@ unsafe extern "system" fn wnd_proc(
                         crate::ui::dialog::show_add_hall_dialog(hwnd_parent, instance);
                     }
                     CMD_EDIT_HALL => { let _ = tx.send(AppCommand::EditHallDict); }
+                    CMD_TRANSCRIBE_FILE => { self::on_transcribe_file(tx.clone()); }
+                    CMD_SUBTITLE_FILE => { self::on_subtitle_file(tx.clone()); }
                     CMD_QUIT => { let _ = tx.send(AppCommand::Quit); }
                     _ => {}
                 }
@@ -366,6 +370,20 @@ unsafe extern "system" fn wnd_proc(
         _ => {}
     }
     unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
+}
+
+fn on_transcribe_file(tx: Sender<AppCommand>) {
+    let path = crate::ui::dialog::pick_audio_file();
+    if let Some(p) = path {
+        let _ = tx.send(AppCommand::TranscribeFile(p));
+    }
+}
+
+fn on_subtitle_file(tx: Sender<AppCommand>) {
+    let path = crate::ui::dialog::pick_audio_file();
+    if let Some(p) = path {
+        let _ = tx.send(AppCommand::SubtitleFile(p));
+    }
 }
 
 unsafe fn show_menu(hwnd: *mut std::ffi::c_void) {
@@ -414,6 +432,16 @@ unsafe fn show_menu(hwnd: *mut std::ffi::c_void) {
 
     let edit_h = lang::t_utf16("tray.menu.edit_hall");
     unsafe { AppendMenuW(menu, MF_STRING, CMD_EDIT_HALL as usize, edit_h.as_ptr()); }
+
+    unsafe { AppendMenuW(menu, MF_SEPARATOR, 0, std::ptr::null()); }
+
+    // Распознать аудиофайл
+    let tr_w = lang::t_utf16("tray.menu.transcribe_file");
+    unsafe { AppendMenuW(menu, MF_STRING, CMD_TRANSCRIBE_FILE as usize, tr_w.as_ptr()); }
+
+    // Создать субтитры из аудиофайла
+    let sub_w = lang::t_utf16("tray.menu.subtitle_file");
+    unsafe { AppendMenuW(menu, MF_STRING, CMD_SUBTITLE_FILE as usize, sub_w.as_ptr()); }
 
     unsafe { AppendMenuW(menu, MF_SEPARATOR, 0, std::ptr::null()); }
 

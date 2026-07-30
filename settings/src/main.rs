@@ -18,6 +18,7 @@ enum Msg {
     SelectDetectorModel(usize),
     ToggleWake,
     ToggleVad,
+    SetSubtitleFormat(String),
     VadThresholdUp,
     VadThresholdDown,
     VadThresholdSet(String),
@@ -82,6 +83,7 @@ struct SettingsApp {
     keep_wav: bool,
     show_console: bool,
     whisper_timeout: String,
+    subtitle_format: String,
     locale: HashMap<String, String>,
     window_x: i32,
     window_y: i32,
@@ -358,6 +360,7 @@ fn set_from_value(app: &mut SettingsApp, cfg: &serde_json::Value) {
     app.cmd_max_words = cfg.get("command_max_words").and_then(|v| v.as_i64()).unwrap_or(3).to_string();
     app.whisper_timeout = cfg.get("whisper_timeout_secs").and_then(|v| v.as_i64()).unwrap_or(120).to_string();
     app.cur_tab = cfg.get("cur_tab").and_then(|v| v.as_i64()).unwrap_or(0) as usize;
+    app.subtitle_format = cfg.get("subtitle_format").and_then(|v| v.as_str()).unwrap_or("srt").to_string();
     app.window_x = cfg.get("window_x").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
     app.window_y = cfg.get("window_y").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
     app.locale = SettingsApp::load_locale(if app.cur_lang == 1 { "en" } else { "ru" });
@@ -422,6 +425,7 @@ fn save_from_ui(app: &SettingsApp, cfg: &mut serde_json::Value) {
     }
     set(cfg, &["language"], serde_json::json!(if app.cur_lang == 1 { "en" } else { "ru" }));
     set(cfg, &["cur_tab"], serde_json::json!(app.cur_tab));
+    set(cfg, &["subtitle_format"], serde_json::json!(app.subtitle_format));
     set(cfg, &["window_x"], serde_json::json!(app.window_x));
     set(cfg, &["window_y"], serde_json::json!(app.window_y));
     if let Ok(n) = app.cmd_max_words.trim().parse::<u32>() {
@@ -539,6 +543,7 @@ impl App for SettingsApp {
                 self.apply();
             }
             Msg::ToggleDark => { self.dark_mode = !self.dark_mode; self.apply(); }
+            Msg::SetSubtitleFormat(f) => { self.subtitle_format = f; self.apply(); }
             Msg::ToggleKeepWav => { self.keep_wav = !self.keep_wav; self.apply(); }
             Msg::ToggleShowConsole => { self.show_console = !self.show_console; self.apply(); }
             Msg::WhisperTimeoutUp => {
@@ -823,6 +828,12 @@ impl SettingsApp {
             checkbox(self.trailing_space).label(self.t("settings.trailing_space")).on_toggle(Msg::ToggleTrail).into(),
             checkbox(self.show_console).label(self.t("settings.show_console")).on_toggle(Msg::ToggleShowConsole).into(),
             checkbox(self.keep_wav).label(self.t("settings.keep_wav")).on_toggle(Msg::ToggleKeepWav).into(),
+            text(self.t("settings.subtitle_format")),
+            radio_group(
+                if self.subtitle_format == "vtt" { 1 } else { 0 },
+                ["SRT", "VTT"],
+                |i| Msg::SetSubtitleFormat(if i == 1 { "vtt".into() } else { "srt".into() }),
+            ).into(),
             checkbox(self.dark_mode).label(self.t("settings.dark_mode")).on_toggle(Msg::ToggleDark).into(),
             divider(),
             button(self.t("settings.debug_test")).on_click(Msg::Debug).into(),
@@ -860,7 +871,7 @@ fn main() {
         fix_repetitions: true, fix_punctuation: true, cmd_max_words: "3".into(),
         math_mode: false, noise_filter: true, warmup: true, show_result: false,
         log_enable: false, log_dir: String::new(), trailing_space: false,
-        keep_wav: false, show_console: true, whisper_timeout: "120".into(), cur_lang: 0, locale: HashMap::new(),
+        keep_wav: false, show_console: true, whisper_timeout: "120".into(), subtitle_format: "srt".into(), cur_lang: 0, locale: HashMap::new(),
         window_x: 0, window_y: 0, proxy: None, last_config_mtime: 0,
     };
     fenestra::run(app, opts);

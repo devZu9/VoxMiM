@@ -1,6 +1,11 @@
 use crate::app::AppCommand;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+#[link(name = "comdlg32")]
+unsafe extern "system" {
+    fn GetOpenFileNameW(lpofn: *mut OPENFILENAMEW) -> i32;
+}
+
 static DLG_ACTIVE: AtomicBool = AtomicBool::new(false);
 static DLG_HALL_ACTIVE: AtomicBool = AtomicBool::new(false);
 
@@ -29,6 +34,34 @@ unsafe extern "system" {
     fn PostMessageW(hWnd: *mut std::ffi::c_void, msg: u32, wParam: usize, lParam: isize) -> i32;
     fn EnableWindow(hWnd: *mut std::ffi::c_void, bEnable: i32) -> i32;
     fn GetParent(hWnd: *mut std::ffi::c_void) -> *mut std::ffi::c_void;
+}
+
+#[allow(non_snake_case)]
+#[repr(C)]
+struct OPENFILENAMEW {
+    lStructSize: u32,
+    hwndOwner: *mut std::ffi::c_void,
+    hInstance: *mut std::ffi::c_void,
+    lpstrFilter: *const u16,
+    lpstrCustomFilter: *mut u16,
+    nMaxCustFilter: u32,
+    nFilterIndex: u32,
+    lpstrFile: *mut u16,
+    nMaxFile: u32,
+    lpstrFileTitle: *mut u16,
+    nMaxFileTitle: u32,
+    lpstrInitialDir: *const u16,
+    lpstrTitle: *const u16,
+    Flags: u32,
+    nFileOffset: u16,
+    nFileExtension: u16,
+    lpstrDefExt: *const u16,
+    lCustData: isize,
+    lpfnHook: Option<unsafe extern "system" fn(*mut std::ffi::c_void, u32, usize, isize) -> isize>,
+    lpTemplateName: *const u16,
+    pvReserved: *mut std::ffi::c_void,
+    dwReserved: u32,
+    FlagsEx: u32,
 }
 
 #[allow(non_snake_case)]
@@ -315,4 +348,42 @@ pub fn show_add_hall_dialog(parent_hwnd: *mut std::ffi::c_void, instance: *mut s
         }
         ShowWindow(hwnd, 5);
     }
+}
+
+/// Win32-диалог выбора аудиофайла. Возвращает путь или None.
+pub fn pick_audio_file() -> Option<String> {
+    let filter: Vec<u16> = "Аудио (*.mp3;*.ogg;*.wav)\0*.mp3;*.ogg;*.wav\0Все файлы (*.*)\0*.*\0\0"
+        .encode_utf16().collect();
+    let mut file_buf = [0u16; 1024];
+    let mut ofn = OPENFILENAMEW {
+        lStructSize: std::mem::size_of::<OPENFILENAMEW>() as u32,
+        hwndOwner: std::ptr::null_mut(),
+        hInstance: std::ptr::null_mut(),
+        lpstrFilter: filter.as_ptr(),
+        lpstrCustomFilter: std::ptr::null_mut(),
+        nMaxCustFilter: 0,
+        nFilterIndex: 1,
+        lpstrFile: file_buf.as_mut_ptr(),
+        nMaxFile: 1024,
+        lpstrFileTitle: std::ptr::null_mut(),
+        nMaxFileTitle: 0,
+        lpstrInitialDir: std::ptr::null(),
+        lpstrTitle: std::ptr::null(),
+        Flags: 0,
+        nFileOffset: 0,
+        nFileExtension: 0,
+        lpstrDefExt: std::ptr::null(),
+        lCustData: 0,
+        lpfnHook: None,
+        lpTemplateName: std::ptr::null(),
+        pvReserved: std::ptr::null_mut(),
+        dwReserved: 0,
+        FlagsEx: 0,
+    };
+    let ret = unsafe { GetOpenFileNameW(&mut ofn) };
+    if ret == 0 {
+        return None;
+    }
+    let end = file_buf.iter().position(|&c| c == 0).unwrap_or(file_buf.len());
+    Some(String::from_utf16_lossy(&file_buf[..end]))
 }

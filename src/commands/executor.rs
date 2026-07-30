@@ -2,6 +2,7 @@ use serde::Deserialize;
 use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum CommandAction {
     Paste(String),
     Hotkey(String),
@@ -19,6 +20,8 @@ pub enum CommandAction {
     SelectionMore,
     SelectionLess,
     ToggleMathMode(bool),
+    TranscribeFile(String),
+    SubtitleFile(String),
     None,
 }
 

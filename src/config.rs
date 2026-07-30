@@ -32,7 +32,7 @@ pub fn models_dir() -> PathBuf {
     from_exe
 }
 
-fn bins_dir() -> PathBuf {
+pub fn bins_dir() -> PathBuf {
     exe_dir().join("bins")
 }
 
@@ -95,7 +95,11 @@ pub struct Config {
     pub cur_tab: usize,
     #[serde(default = "default_whisper_timeout")]
     pub whisper_timeout_secs: u64,
+    #[serde(default = "default_subtitle_format")]
+    pub subtitle_format: String,
 }
+
+fn default_subtitle_format() -> String { "srt".to_string() }
 
 fn default_whisper_timeout() -> u64 { 10 }
 
@@ -143,7 +147,7 @@ pub struct TextFixConfig {
 
 impl Default for Config {
     fn default() -> Self {
-        let models = models_dir();
+        let _models = models_dir();
         let dicts = dicts_dir();
 
         #[cfg(target_os = "windows")]
@@ -250,6 +254,7 @@ impl Default for Config {
             window_y: 0,
             cur_tab: 0,
             whisper_timeout_secs: 10,
+            subtitle_format: default_subtitle_format(),
         }
     }
 }

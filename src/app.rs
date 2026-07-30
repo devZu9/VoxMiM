@@ -34,6 +34,8 @@ pub enum AppCommand {
     EditUserDict,
     AddHallEntry { phrase: String },
     EditHallDict,
+    TranscribeFile(String),
+    SubtitleFile(String),
     ApplyConfig(Box<Config>),
     Quit,
 }
@@ -520,6 +522,7 @@ impl App {
         }
     }
 
+    #[allow(dead_code)]
     pub fn cmd_tx(&self) -> crossbeam_channel::Sender<AppCommand> {
         self.cmd_tx.clone()
     }
@@ -614,6 +617,8 @@ impl App {
                 }
                 true
             }
+            AppCommand::TranscribeFile(ref path) => { self.on_transcribe_file(path); true }
+            AppCommand::SubtitleFile(ref path) => { self.on_subtitle_file(path); true }
             AppCommand::EditHallDict => { self.on_edit_hall_dict(); true }
             AppCommand::Quit => {
                 crate::ui::tray::request_exit();
@@ -818,8 +823,65 @@ impl App {
                     let _ = self.cmd_tx.send(AppCommand::ToggleMathMode);
                 }
             }
+            CommandAction::TranscribeFile(_) | CommandAction::SubtitleFile(_) => {
+                log::info!("Команда файла обрабатывается через трей-меню, не через голос");
+            }
             CommandAction::None => {}
         }
+    }
+
+    fn on_transcribe_file(&self, path: &str) {
+        let p = std::path::Path::new(path);
+        if !p.exists() {
+            log::error!("TranscribeFile: файл не найден — {path}");
+            return;
+        }
+        log::info!("TranscribeFile: распознаю {path}");
+        let model = self.config.model_path.clone();
+        if !model.exists() {
+            log::error!("TranscribeFile: модель не найдена — {}", model.display());
+            return;
+        }
+        let lang = self.config.language.clone();
+        let bins_dir = crate::config::bins_dir();
+        let p = p.to_path_buf();
+        let text = std::thread::scope(|s| {
+            s.spawn(|| {
+                crate::stt::engine::transcribe_audio_file(&p, &model, &lang, &bins_dir)
+            }).join().ok()
+        }).and_then(|r| r.ok());
+        match text {
+            Some(t) => {
+                let fixed = crate::text::fix_text(&t, &self.config.text_fix, &self.user_dict);
+                log::info!("TranscribeFile: ✅ «{fixed}»");
+                let _ = self.insert_tx.send(fixed);
+            }
+            None => log::error!("TranscribeFile: ❌ ошибка"),
+        }
+    }
+
+    fn on_subtitle_file(&self, path: &str) {
+        let p = std::path::Path::new(path);
+        if !p.exists() {
+            log::error!("SubtitleFile: файл не найден — {path}");
+            return;
+        }
+        log::info!("SubtitleFile: создаю субтитры из {path}");
+        let model = &self.config.model_path;
+        if !model.exists() {
+            log::error!("SubtitleFile: модель не найдена — {}", model.display());
+            return;
+        }
+        let lang = self.config.language.clone();
+        let fmt = self.config.subtitle_format.clone();
+        let bins_dir = crate::config::bins_dir();
+        let p = p.to_path_buf();
+        let model = model.to_path_buf();
+        std::thread::scope(|s| {
+            s.spawn(|| {
+                crate::stt::engine::subtitle_audio_file(&p, &model, &lang, &fmt, &bins_dir)
+            }).join().ok()
+        });
     }
 
     fn reload_config(&mut self) {

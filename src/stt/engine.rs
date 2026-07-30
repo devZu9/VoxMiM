@@ -423,3 +423,91 @@ impl WhisperEngine {
 impl Drop for WhisperEngine {
     fn drop(&mut self) { self.stop_server(); }
 }
+
+// ── Вспомогательные функции для распознавания файлов ──
+
+/// Конвертирует аудиофайл (mp3/ogg/wav) во временный WAV 16kHz mono через ffmpeg.
+/// Возвращает путь к временному WAV-файлу.
+fn convert_to_wav(input: &Path) -> Result<std::path::PathBuf, String> {
+    let out = input.parent().unwrap_or_else(|| Path::new(".")).join("__voxmim_temp.wav");
+    let status = std::process::Command::new("ffmpeg")
+        .args(["-y", "-i", input.to_str().unwrap()])
+        .args(["-f", "wav", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1"])
+        .arg(out.to_str().unwrap())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map_err(|e| format!("ffmpeg: {e}"))?;
+    if !status.success() {
+        return Err("ffmpeg: ошибка конвертации".to_string());
+    }
+    Ok(out)
+}
+
+/// Распознаёт аудиофайл (mp3/ogg/wav) и возвращает текст.
+pub fn transcribe_audio_file(
+    input: &Path,
+    model: &Path,
+    lang: &str,
+    bins_dir: &Path,
+) -> Result<String, String> {
+    let wav = convert_to_wav(input)?;
+    let exe = bins_dir.join("whisper-cli.exe");
+    if !exe.exists() {
+        return Err(format!("whisper-cli не найден: {}", exe.display()));
+    }
+    let output = std::process::Command::new(&exe)
+        .args(["-m", model.to_str().unwrap(), "-f", wav.to_str().unwrap()])
+        .args(["--language", lang, "--no-timestamps"])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .current_dir(bins_dir)
+        .output()
+        .map_err(|e| format!("whisper-cli: {e}"))?;
+    let _ = std::fs::remove_file(&wav);
+    if !output.status.success() {
+        return Err("whisper-cli: ошибка".to_string());
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+/// Создаёт файл субтитров (.srt/.vtt) из аудиофайла.
+pub fn subtitle_audio_file(
+    input: &Path,
+    model: &Path,
+    lang: &str,
+    format: &str,
+    bins_dir: &Path,
+) -> Result<(), String> {
+    let wav = convert_to_wav(input)?;
+    let exe = bins_dir.join("whisper-cli.exe");
+    if !exe.exists() {
+        return Err(format!("whisper-cli не найден: {}", exe.display()));
+    }
+    let out_flag = match format {
+        "vtt" => "--output-vtt",
+        _ => "--output-srt",
+    };
+    let out_base = input.parent().unwrap_or_else(|| Path::new(".")).join("__voxmim_sub");
+    let status = std::process::Command::new(&exe)
+        .args(["-m", model.to_str().unwrap(), "-f", wav.to_str().unwrap()])
+        .args(["--language", lang, out_flag, "-of", out_base.to_str().unwrap()])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .current_dir(bins_dir)
+        .status()
+        .map_err(|e| format!("whisper-cli: {e}"))?;
+    let _ = std::fs::remove_file(&wav);
+    if !status.success() {
+        return Err("whisper-cli: ошибка создания субтитров".to_string());
+    }
+    // Переименовываем из __voxmim_sub в имя исходного файла
+    let ext = match format { "vtt" => "vtt", _ => "srt" };
+    let src = out_base.with_extension(ext);
+    let dst = input.with_extension(ext);
+    if src != dst {
+        let _ = std::fs::rename(&src, &dst);
+    }
+    log::info!("SubtitleFile: ✅ {}", dst.display());
+    Ok(())
+}
