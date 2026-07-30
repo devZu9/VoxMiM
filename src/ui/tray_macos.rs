@@ -5,8 +5,8 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use objc2::rc::Retained;
 use objc2::{define_class, extern_methods, msg_send, sel, ClassType, MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{
-    NSApplication, NSApplicationActivationPolicy, NSImage, NSMenu, NSMenuItem, NSStatusBar,
-    NSStatusItem,
+    NSApplication, NSApplicationActivationPolicy, NSControlStateValue, NSControlStateValueOff,
+    NSControlStateValueOn, NSImage, NSMenu, NSMenuItem, NSStatusBar, NSStatusItem,
 };
 use objc2_foundation::{NSData, NSObject, NSTimer, NSString};
 
@@ -79,6 +79,8 @@ struct TickCtx {
     loading_img: Option<Retained<NSImage>>,
     idle_img: Option<Retained<NSImage>>,
     rec_img: Option<Retained<NSImage>>,
+    vad_item: Retained<NSMenuItem>,
+    wake_item: Retained<NSMenuItem>,
     mtm: MainThreadMarker,
     blink: bool,
 }
@@ -154,6 +156,12 @@ define_class!(
 
                     c.blink = !c.blink;
 
+                    // Обновление галочек меню
+                    let on = NSControlStateValueOn;
+                    let off = NSControlStateValueOff;
+                    c.vad_item.setState(if VAD_ON.load(Ordering::SeqCst) { on } else { off });
+                    c.wake_item.setState(if WAKE_ON.load(Ordering::SeqCst) { on } else { off });
+
                     if recovering || !ready {
                         // Мигание: loading_img при blink, idle_img в паузе
                         let img = if c.blink { c.loading_img.as_ref() } else { c.idle_img.as_ref() };
@@ -189,7 +197,7 @@ fn ns_string(s: &str) -> Retained<NSString> {
     NSString::from_str(s)
 }
 
-fn build_menu(handler: &MenuHandler, mtm: MainThreadMarker) -> Retained<NSMenu> {
+fn build_menu(handler: &MenuHandler, mtm: MainThreadMarker) -> (Retained<NSMenu>, Retained<NSMenuItem>, Retained<NSMenuItem>) {
     let menu: Retained<NSMenu> = unsafe { msg_send![NSMenu::alloc(mtm), init] };
 
     let ver = format!("VoxMiM v{}", env!("CARGO_PKG_VERSION"));
@@ -268,7 +276,7 @@ fn build_menu(handler: &MenuHandler, mtm: MainThreadMarker) -> Retained<NSMenu> 
     let _: () = unsafe { msg_send![&quit_item, setTarget: handler] };
     menu.addItem(&quit_item);
 
-    menu
+    (menu, vad_item, wake_item)
 }
 
 fn icon_data(is_loading: bool, is_recording: bool) -> &'static [u8] {
@@ -306,7 +314,7 @@ pub fn run_tray_main() {
     app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
 
     let handler = MenuHandler::new(mtm);
-    let menu = build_menu(&handler, mtm);
+    let (menu, vad_item, wake_item) = build_menu(&handler, mtm);
 
     let status_item = NSStatusBar::systemStatusBar().statusItemWithLength(-1.0);
     status_item.setAutosaveName(Some(&ns_string("VoxMiM")));
@@ -327,6 +335,8 @@ pub fn run_tray_main() {
             loading_img,
             idle_img,
             rec_img,
+            vad_item,
+            wake_item,
             mtm,
             blink: false,
         });
