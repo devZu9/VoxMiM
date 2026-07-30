@@ -326,8 +326,14 @@ impl App {
                         Ok(s) => s,
                         Err(_) => break,
                     };
-                    if samples.len() < 16000 {
+                    if samples.len() < 24000 {
                         log::warn!("Короткое аудио ({} сэмплов)", samples.len());
+                        let _ = cmd_tx_w.send(AppCommand::RecordingResult(String::new()));
+                        continue;
+                    }
+                    let energy = chunk_energy(&samples);
+                    if energy < 0.00005 {
+                        log::warn!("Тишина ({:.6}) — отбрасываю", energy);
                         let _ = cmd_tx_w.send(AppCommand::RecordingResult(String::new()));
                         continue;
                     }
@@ -744,8 +750,14 @@ impl App {
         };
 
         log::info!("⏹ Записано ({} сэмплов)", samples.len());
-        if samples.len() < 16000 {
+        if samples.len() < 24000 {
             log::warn!("Слишком короткая запись");
+            self.state = AppState::Idle;
+            return;
+        }
+        let energy = chunk_energy(&samples);
+        if energy < 0.00005 {
+            log::warn!("Тишина ({:.6}) — отбрасываю", energy);
             self.state = AppState::Idle;
             return;
         }

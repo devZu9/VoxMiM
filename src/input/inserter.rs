@@ -365,6 +365,9 @@ impl TextInserter {
         {
             use std::io::Write;
             use std::process::Command;
+            use std::sync::Mutex;
+            static INS_LOCK: Mutex<()> = Mutex::new(());
+            let _lock = INS_LOCK.lock().unwrap();
 
             let saved = {
                 let output = Command::new("pbpaste").output();

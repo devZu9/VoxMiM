@@ -324,6 +324,9 @@ fn update_icon(item: &NSStatusItem, img: &NSImage, mtm: MainThreadMarker) {
     if let Some(btn) = item.button(mtm) {
         btn.setImage(Some(img));
     }
+    // Резервный путь — напрямую на NSStatusItem
+    // Работает до того, как button стал доступен
+    let _: () = unsafe { msg_send![item, setImage: img] };
 }
 
 pub fn run_tray_main() {
