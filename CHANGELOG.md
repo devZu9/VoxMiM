@@ -5,7 +5,19 @@
 Формат — [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 проект следует [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.10.0] — 2026-07-30
+## [0.10.1] — 2026-07-30
+
+### Исправлено
+
+- **Трей-меню macOS — левый клик.** Заменён ручной `runUntilDate`-цикл на `NSTimer` + `NSApplication::run()` — правильный Cocoa-паттерн. Меню теперь открывается по клику на иконку.
+- **Cmd+drag для иконки macOS.** Добавлен `setAutosaveName`, айтем создаётся до `finishLaunching()` — иконку можно перетаскивать в меню-баре как любую другую.
+- **Template-иконка (белая на тёмной теме).** Возвращён `setTemplate(true)` — иконка VoxMiM в меню-баре теперь белая, как wifi/батарея.
+- **Single-instance на macOS.** Заменён `create_new(true)` на PID-стаб (`kill -0`) — после краша/pkill не остаётся мусорного lock-файла, новый запуск не требует `rm lock` вручную.
+- **Модель whisper на macOS.** `models_dir()` теперь ищет модель в корне проекта (`../models/` от `target/release/`), а не только в `target/release/models/`.
+
+### Версии
+
+- **voxmim**: 0.10.0 → 0.10.1
 
 ### Добавлено — macOS порт
 
