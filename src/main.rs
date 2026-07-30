@@ -90,6 +90,9 @@ fn init_logger(config: &Config) {
 }
 
 fn main() {
+    #[cfg(target_os = "macos")]
+    unsafe { std::env::set_var("LANG", "ru_RU.UTF-8"); }
+
     // Panic hook
     std::panic::set_hook(Box::new(|info| {
         #[cfg(target_os = "windows")]

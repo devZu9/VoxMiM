@@ -46,7 +46,7 @@ pub fn toggle(mtm: MainThreadMarker) {
             size: objc2_foundation::NSSize { width: 650.0, height: 500.0 },
         };
 
-        let mask: u64 = (1 << 0) | (1 << 1) | (1 << 2) | (1 << 3) | (1 << 7);
+        let mask: u64 = (1 << 0) | (1 << 1) | (1 << 2) | (1 << 3);
 
         let panel: *mut NSPanel = unsafe {
             let p: *mut NSPanel = msg_send![NSPanel::class(), alloc];

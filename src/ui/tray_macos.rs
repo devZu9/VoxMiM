@@ -147,6 +147,7 @@ define_class!(
 
         #[unsafe(method(handleAddWord:))]
         fn handle_add_word(&self, _sender: &NSObject) {
+            log::info!("Dialog: handleAddWord вызван");
             show_input_dialog(
                 &ns_string(&crate::lang::t("dialog.add_word.title")),
                 &ns_string(&crate::lang::t("dialog.add_word.label_wrong")),
