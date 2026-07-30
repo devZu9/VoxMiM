@@ -140,6 +140,13 @@ define_class!(
             }
         }
 
+        #[unsafe(method(handleShowLog:))]
+        fn handle_show_log(&self, _sender: &NSObject) {
+            if let Some(mtm) = MainThreadMarker::new() {
+                crate::ui::log_macos::toggle(mtm);
+            }
+        }
+
         #[unsafe(method(tick:))]
         fn tick(&self, _timer: &NSTimer) {
             TICK.with_borrow_mut(|ctx| {
@@ -174,6 +181,7 @@ define_class!(
                             update_icon(&c.item, img, c.mtm);
                         }
                     }
+                    crate::ui::log_macos::tick(c.mtm);
                 }
             });
         }
@@ -265,6 +273,17 @@ fn build_menu(handler: &MenuHandler, mtm: MainThreadMarker) -> (Retained<NSMenu>
     };
     let _: () = unsafe { msg_send![&math_item, setTarget: handler] };
     menu.addItem(&math_item);
+    menu.addItem(&NSMenuItem::separatorItem(mtm));
+
+    let log_item = unsafe {
+        NSMenuItem::initWithTitle_action_keyEquivalent(
+            NSMenuItem::alloc(mtm), &ns_string(&crate::lang::t("tray.menu.show_log")),
+            Some(sel!(handleShowLog:)), &ns_string(""),
+        )
+    };
+    let _: () = unsafe { msg_send![&log_item, setTarget: handler] };
+    menu.addItem(&log_item);
+
     menu.addItem(&NSMenuItem::separatorItem(mtm));
 
     let quit_item = unsafe {
