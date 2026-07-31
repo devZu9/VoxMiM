@@ -876,3 +876,226 @@ fn main() {
     };
     fenestra::run(app, opts);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_app() -> SettingsApp {
+        SettingsApp {
+            cur_tab: 0, dark_mode: false, engine_server: false, det_server: false,
+            use_gpu: true, model_dir: String::new(), models: Vec::new(),
+            transcriber_model_idx: 0, detector_model_idx: 0,
+            wake_enable: false, vad_enable: false, vad_threshold: "0.008".into(),
+            vad_timeout: "1.5".into(), vad_start_timeout: "2.0".into(), fix_hallucinations: true, fix_user_dict: true,
+            fix_repetitions: true, fix_punctuation: true, cmd_max_words: "3".into(),
+            math_mode: false, noise_filter: true, warmup: true, show_result: false,
+            log_enable: false, log_dir: String::new(), trailing_space: false,
+            keep_wav: false, show_console: true, whisper_timeout: "120".into(), subtitle_format: "srt".into(), cur_lang: 0, locale: SettingsApp::load_locale("ru"),
+            window_x: 0, window_y: 0, proxy: None, last_config_mtime: 0,
+        }
+    }
+
+    #[test]
+    fn test_toggle_vad_flips_field() {
+        let mut app = test_app();
+        app.update(Msg::ToggleVad);
+        assert!(app.vad_enable);
+        app.update(Msg::ToggleVad);
+        assert!(!app.vad_enable);
+    }
+
+    #[test]
+    fn test_vad_threshold_up_and_cap() {
+        let mut app = test_app();
+        app.update(Msg::VadThresholdUp);
+        assert_eq!(app.vad_threshold, "0.010");
+        // потолок 0.05: 0.049+0.002 = 0.050999… > 0.05 → без изменений
+        app.vad_threshold = "0.049".into();
+        app.update(Msg::VadThresholdUp);
+        assert_eq!(app.vad_threshold, "0.049");
+        app.vad_threshold = "0.050".into();
+        app.update(Msg::VadThresholdUp);
+        assert_eq!(app.vad_threshold, "0.050");
+    }
+
+    #[test]
+    fn test_vad_threshold_down_and_floor() {
+        let mut app = test_app();
+        app.vad_threshold = "0.003".into();
+        app.update(Msg::VadThresholdDown);
+        // 0.003-0.002 = 0.000999… < 0.002 → без изменений
+        assert_eq!(app.vad_threshold, "0.003");
+        app.vad_threshold = "0.002".into();
+        app.update(Msg::VadThresholdDown);
+        assert_eq!(app.vad_threshold, "0.002");
+    }
+
+    #[test]
+    fn test_vad_threshold_set_clamps() {
+        let mut app = test_app();
+        app.update(Msg::VadThresholdSet("0.5".into()));
+        assert_eq!(app.vad_threshold, "0.050");
+        app.update(Msg::VadThresholdSet("0.0001".into()));
+        assert_eq!(app.vad_threshold, "0.002");
+        app.update(Msg::VadThresholdSet("не число".into()));
+        assert_eq!(app.vad_threshold, "0.002");
+    }
+
+    #[test]
+    fn test_vad_threshold_reset() {
+        let mut app = test_app();
+        app.vad_threshold = "0.042".into();
+        app.update(Msg::VadThresholdReset);
+        assert_eq!(app.vad_threshold, "0.008");
+    }
+
+    #[test]
+    fn test_vad_timeout_up_and_cap() {
+        let mut app = test_app();
+        app.update(Msg::VadTimeoutUp);
+        assert_eq!(app.vad_timeout, "1.6");
+        app.vad_timeout = "9.9".into();
+        app.update(Msg::VadTimeoutUp);
+        assert_eq!(app.vad_timeout, "10.0");
+        app.update(Msg::VadTimeoutUp);
+        assert_eq!(app.vad_timeout, "10.0");
+    }
+
+    #[test]
+    fn test_vad_timeout_down_and_floor() {
+        let mut app = test_app();
+        app.vad_timeout = "0.5".into();
+        app.update(Msg::VadTimeoutDown);
+        assert_eq!(app.vad_timeout, "0.5");
+        app.update(Msg::VadTimeoutUp);
+        app.update(Msg::VadTimeoutDown);
+        assert_eq!(app.vad_timeout, "0.5");
+    }
+
+    #[test]
+    fn test_whisper_timeout_steppers() {
+        let mut app = test_app();
+        app.update(Msg::WhisperTimeoutUp);
+        assert_eq!(app.whisper_timeout, "130");
+        app.update(Msg::WhisperTimeoutDown);
+        assert_eq!(app.whisper_timeout, "120");
+        app.whisper_timeout = "10".into();
+        app.update(Msg::WhisperTimeoutDown);
+        assert_eq!(app.whisper_timeout, "10");
+    }
+
+    #[test]
+    fn test_whisper_timeout_set_clamps() {
+        let mut app = test_app();
+        app.update(Msg::WhisperTimeoutSet("999".into()));
+        assert_eq!(app.whisper_timeout, "180");
+        app.update(Msg::WhisperTimeoutSet("1".into()));
+        assert_eq!(app.whisper_timeout, "10");
+    }
+
+    #[test]
+    fn test_toggle_text_fixes() {
+        let mut app = test_app();
+        app.update(Msg::ToggleTrail);
+        assert!(app.trailing_space);
+        app.update(Msg::ToggleHall);
+        assert!(!app.fix_hallucinations);
+        app.update(Msg::ToggleUserDict);
+        assert!(!app.fix_user_dict);
+        app.update(Msg::ToggleRep);
+        assert!(!app.fix_repetitions);
+        app.update(Msg::TogglePunct);
+        assert!(!app.fix_punctuation);
+    }
+
+    #[test]
+    fn test_set_lang_switches_locale() {
+        let mut app = test_app();
+        app.update(Msg::SetLang(1));
+        assert_eq!(app.cur_lang, 1);
+        // en-локаль загружена — ключ вкладки существует
+        assert!(app.locale.contains_key("settings.tab.general"));
+        app.update(Msg::SetLang(0));
+        assert_eq!(app.cur_lang, 0);
+    }
+
+    #[test]
+    fn test_set_subtitle_format() {
+        let mut app = test_app();
+        app.update(Msg::SetSubtitleFormat("vtt".into()));
+        assert_eq!(app.subtitle_format, "vtt");
+    }
+
+    #[test]
+    fn test_set_cmd_max_words_no_apply() {
+        let mut app = test_app();
+        app.update(Msg::SetCmdMaxWords("7".into()));
+        assert_eq!(app.cmd_max_words, "7");
+    }
+
+    #[test]
+    fn test_set_from_value_parses_config() {
+        let mut app = test_app();
+        let cfg = serde_json::json!({
+            "engine_mode": "server",
+            "detector_mode": "one-shot",
+            "use_gpu": false,
+            "wake_mode": true,
+            "vad": {"enabled": true, "threshold": 0.012, "silence_duration_secs": 2.5, "start_timeout_secs": 3.0},
+            "text_fix": {"trailing_space": true, "fix_hallucinations": false},
+            "math_mode": true,
+            "language": "en",
+            "command_max_words": 5,
+            "whisper_timeout_secs": 60,
+            "subtitle_format": "vtt",
+            "dark_mode": true,
+            "cur_tab": 2,
+            "keep_wav": true
+        });
+        set_from_value(&mut app, &cfg);
+        assert!(app.engine_server);
+        assert!(!app.det_server);
+        assert!(!app.use_gpu);
+        assert!(app.wake_enable);
+        assert!(app.vad_enable);
+        assert_eq!(app.vad_threshold, "0.012");
+        assert_eq!(app.vad_timeout, "2.5");
+        assert_eq!(app.vad_start_timeout, "3.0");
+        assert!(app.trailing_space);
+        assert!(!app.fix_hallucinations);
+        assert!(app.math_mode);
+        assert_eq!(app.cur_lang, 1);
+        assert_eq!(app.cmd_max_words, "5");
+        assert_eq!(app.whisper_timeout, "60");
+        assert_eq!(app.subtitle_format, "vtt");
+        assert!(app.dark_mode);
+        assert_eq!(app.cur_tab, 2);
+        assert!(app.keep_wav);
+    }
+
+    #[test]
+    fn test_save_from_ui_writes_config() {
+        let mut app = test_app();
+        app.engine_server = true;
+        app.vad_enable = true;
+        app.vad_threshold = "0.02".into();
+        app.vad_timeout = "2.0".into();
+        app.trailing_space = true;
+        app.math_mode = true;
+        app.cur_lang = 1;
+        app.subtitle_format = "vtt".into();
+        app.whisper_timeout = "45".into();
+        let mut cfg = serde_json::json!({});
+        save_from_ui(&app, &mut cfg);
+        assert_eq!(cfg["engine_mode"], "server");
+        assert_eq!(cfg["vad"]["enabled"], true);
+        assert_eq!(cfg["vad"]["threshold"], 0.02);
+        assert_eq!(cfg["vad"]["silence_duration_secs"], 2.0);
+        assert_eq!(cfg["text_fix"]["trailing_space"], true);
+        assert_eq!(cfg["math_mode"], true);
+        assert_eq!(cfg["language"], "en");
+        assert_eq!(cfg["subtitle_format"], "vtt");
+        assert_eq!(cfg["whisper_timeout_secs"], 45);
+    }
+}

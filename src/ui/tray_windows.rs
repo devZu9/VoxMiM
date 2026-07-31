@@ -1,5 +1,6 @@
 use crate::app::AppCommand;
 use crate::lang;
+use crate::ui::tray_menu::*;
 use crossbeam_channel::Sender;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -14,19 +15,6 @@ const WM_NULL: u32 = 0x0000;
 
 const NIM_MODIFY: u32 = 0x00000001;
 const TIMER_ID: usize = 1;
-
-const CMD_SETTINGS: u32 = 1000;
-const CMD_CONSOLE: u32 = 1004;
-const CMD_AUTOSTOP: u32 = 1001;
-const CMD_WAKE: u32 = 1007;
-const CMD_MATH: u32 = 1002;
-const CMD_QUIT: u32 = 1003;
-const CMD_ADD_WORD: u32 = 1005;
-const CMD_EDIT_DICT: u32 = 1006;
-const CMD_ADD_HALL: u32 = 1008;
-const CMD_EDIT_HALL: u32 = 1009;
-const CMD_TRANSCRIBE_FILE: u32 = 1010;
-const CMD_SUBTITLE_FILE: u32 = 1011;
 
 static TRAY_AUTOSTOP: AtomicBool = AtomicBool::new(false);
 static TRAY_WAKE: AtomicBool = AtomicBool::new(false);
@@ -390,82 +378,24 @@ unsafe fn show_menu(hwnd: *mut std::ffi::c_void) {
     let menu = unsafe { CreatePopupMenu() };
     if menu.is_null() { return; }
 
-    // Версия
-    let ver = lang::t("tray.menu.version").replace("{version}", env!("CARGO_PKG_VERSION"));
-    let ver_w: Vec<u16> = format!("{ver}\0").encode_utf16().collect();
-    unsafe { AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, ver_w.as_ptr()); }
-
-    unsafe { AppendMenuW(menu, MF_SEPARATOR, 0, std::ptr::null()); }
-
-    // Настройки
-    let set_w = lang::t_utf16("tray.menu.settings");
-    unsafe { AppendMenuW(menu, MF_STRING, CMD_SETTINGS as usize, set_w.as_ptr()); }
-
-    unsafe { AppendMenuW(menu, MF_SEPARATOR, 0, std::ptr::null()); }
-
-    // Показать/скрыть окно
-    let con_visible = unsafe {
+    let console_visible = unsafe {
         unsafe extern "system" {
             fn IsWindowVisible(hWnd: *mut std::ffi::c_void) -> i32;
         }
         let raw = crate::CONSOLE_HWND.load(std::sync::atomic::Ordering::SeqCst);
         raw != 0 && IsWindowVisible(raw as *mut std::ffi::c_void) != 0
     };
-    let con_key = if con_visible { "tray.menu.toggle_console.hide" } else { "tray.menu.toggle_console.show" };
-    let con_w = lang::t_utf16(con_key);
-    unsafe { AppendMenuW(menu, MF_STRING, CMD_CONSOLE as usize, con_w.as_ptr()); }
 
-    unsafe { AppendMenuW(menu, MF_SEPARATOR, 0, std::ptr::null()); }
+    let state = TrayMenuState {
+        vad_on: TRAY_AUTOSTOP.load(Ordering::SeqCst),
+        wake_on: TRAY_WAKE.load(Ordering::SeqCst),
+        console_visible,
+    };
 
-    // Пользовательский словарь
-    let add_w = lang::t_utf16("tray.menu.add_word");
-    unsafe { AppendMenuW(menu, MF_STRING, CMD_ADD_WORD as usize, add_w.as_ptr()); }
-
-    let edit_w = lang::t_utf16("tray.menu.edit_dict");
-    unsafe { AppendMenuW(menu, MF_STRING, CMD_EDIT_DICT as usize, edit_w.as_ptr()); }
-
-    unsafe { AppendMenuW(menu, MF_SEPARATOR, 0, std::ptr::null()); }
-
-    // Словарь галлюцинаций
-    let add_h = lang::t_utf16("tray.menu.add_hall");
-    unsafe { AppendMenuW(menu, MF_STRING, CMD_ADD_HALL as usize, add_h.as_ptr()); }
-
-    let edit_h = lang::t_utf16("tray.menu.edit_hall");
-    unsafe { AppendMenuW(menu, MF_STRING, CMD_EDIT_HALL as usize, edit_h.as_ptr()); }
-
-    unsafe { AppendMenuW(menu, MF_SEPARATOR, 0, std::ptr::null()); }
-
-    // Распознать аудиофайл
-    let tr_w = lang::t_utf16("tray.menu.transcribe_file");
-    unsafe { AppendMenuW(menu, MF_STRING, CMD_TRANSCRIBE_FILE as usize, tr_w.as_ptr()); }
-
-    // Создать субтитры из аудиофайла
-    let sub_w = lang::t_utf16("tray.menu.subtitle_file");
-    unsafe { AppendMenuW(menu, MF_STRING, CMD_SUBTITLE_FILE as usize, sub_w.as_ptr()); }
-
-    unsafe { AppendMenuW(menu, MF_SEPARATOR, 0, std::ptr::null()); }
-
-    // Голосовая активация (Wake Word) — с галочкой
-    let wake_on = TRAY_WAKE.load(Ordering::SeqCst);
-    let wake_flags = MF_STRING | if wake_on { MF_CHECKED } else { MF_UNCHECKED };
-    let wake_w = lang::t_utf16("tray.menu.voice_activation");
-    unsafe { AppendMenuW(menu, wake_flags, CMD_WAKE as usize, wake_w.as_ptr()); }
-
-    // Автостоп (VAD) — с галочкой
-    let vad_on = TRAY_AUTOSTOP.load(Ordering::SeqCst);
-    let vad_flags = MF_STRING | if vad_on { MF_CHECKED } else { MF_UNCHECKED };
-    let vad_w = lang::t_utf16("tray.menu.auto_stop");
-    unsafe { AppendMenuW(menu, vad_flags, CMD_AUTOSTOP as usize, vad_w.as_ptr()); }
-
-    // Math Mode
-    let math_w = lang::t_utf16("tray.menu.math_mode");
-    unsafe { AppendMenuW(menu, MF_STRING, CMD_MATH as usize, math_w.as_ptr()); }
-
-    unsafe { AppendMenuW(menu, MF_SEPARATOR, 0, std::ptr::null()); }
-
-    // Выход
-    let quit_w = lang::t_utf16("tray.menu.quit");
-    unsafe { AppendMenuW(menu, MF_STRING, CMD_QUIT as usize, quit_w.as_ptr()); }
+    let version = env!("CARGO_PKG_VERSION");
+    for item in menu_items(&state) {
+        unsafe { append_menu_item(menu, &item, version); }
+    }
 
     let mut pt: POINT = unsafe { std::mem::zeroed() };
     unsafe { GetCursorPos(&mut pt); }
@@ -475,6 +405,34 @@ unsafe fn show_menu(hwnd: *mut std::ffi::c_void) {
         TrackPopupMenu(menu, TPM_RIGHTBUTTON | TPM_BOTTOMALIGN, pt.x, pt.y, 0, hwnd, std::ptr::null_mut());
         PostMessageW(hwnd, WM_NULL, 0, 0);
         DestroyMenu(menu);
+    }
+}
+
+unsafe fn append_menu_item(
+    menu: *mut std::ffi::c_void,
+    item: &crate::ui::tray_menu::TrayMenuItem,
+    version: &str,
+) {
+    unsafe {
+        match item.kind {
+            MenuKind::Separator => {
+                AppendMenuW(menu, MF_SEPARATOR, 0, std::ptr::null());
+            }
+            MenuKind::Version => {
+                let label = lang::t(item.label_key).replace("{version}", version);
+                let w: Vec<u16> = format!("{label}\0").encode_utf16().collect();
+                AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, w.as_ptr());
+            }
+            MenuKind::Item => {
+                let w = lang::t_utf16(item.label_key);
+                AppendMenuW(menu, MF_STRING, item.id as usize, w.as_ptr());
+            }
+            MenuKind::Checked(on) => {
+                let flags = MF_STRING | if on { MF_CHECKED } else { MF_UNCHECKED };
+                let w = lang::t_utf16(item.label_key);
+                AppendMenuW(menu, flags, item.id as usize, w.as_ptr());
+            }
+        }
     }
 }
 

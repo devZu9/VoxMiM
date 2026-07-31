@@ -983,3 +983,116 @@ impl App {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// App для тестов: server-режим (без скачивания бинарников),
+    /// без wake-режима, модели не существуют — распознавание не запускается.
+    fn test_app() -> App {
+        let mut cfg = Config::default();
+        cfg.engine_mode = "server".to_string();
+        cfg.detector_mode = "server".to_string();
+        cfg.wake_mode = false;
+        cfg.vad.enabled = false;
+        cfg.model_path = std::path::PathBuf::from("no-model.bin");
+        cfg.detector_model = std::path::PathBuf::from("no-detector.bin");
+        cfg.whisper_bins_path = Some(std::env::temp_dir().to_string_lossy().to_string());
+        cfg.commands_path = None;
+        cfg.aliases_path = None;
+        cfg.user_dict_path = None;
+        App::new(cfg)
+    }
+
+    fn fill_buffer(app: &App, samples: Vec<f32>) {
+        *app.audio_buf.lock().unwrap() = samples;
+    }
+
+    #[test]
+    fn test_chunk_energy() {
+        assert_eq!(chunk_energy(&[]), 0.0);
+        assert_eq!(chunk_energy(&[0.0, 0.0, 0.0]), 0.0);
+        assert!((chunk_energy(&[0.5, 0.5]) - 0.25).abs() < f32::EPSILON);
+        assert!((chunk_energy(&[0.1, -0.1]) - 0.01).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_start_recording_transitions_to_recording() {
+        let mut app = test_app();
+        assert_eq!(app.state, AppState::Idle);
+        assert!(app.handle_command(AppCommand::StartRecording));
+        assert_eq!(app.state, AppState::Recording);
+        assert!(app.recording.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn test_start_while_recording_noop_without_vad() {
+        let mut app = test_app();
+        app.handle_command(AppCommand::StartRecording);
+        app.handle_command(AppCommand::StartRecording);
+        assert_eq!(app.state, AppState::Recording);
+    }
+
+    #[test]
+    fn test_stop_short_returns_idle() {
+        let mut app = test_app();
+        app.handle_command(AppCommand::StartRecording);
+        fill_buffer(&app, vec![0.1; 100]);
+        app.handle_command(AppCommand::StopRecording);
+        assert_eq!(app.state, AppState::Idle);
+        assert!(!app.recording.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn test_stop_silence_returns_idle() {
+        let mut app = test_app();
+        app.handle_command(AppCommand::StartRecording);
+        fill_buffer(&app, vec![0.0; 24000]);
+        app.handle_command(AppCommand::StopRecording);
+        assert_eq!(app.state, AppState::Idle);
+    }
+
+    #[test]
+    fn test_stop_without_recording_noop() {
+        let mut app = test_app();
+        app.handle_command(AppCommand::StopRecording);
+        assert_eq!(app.state, AppState::Idle);
+    }
+
+    #[test]
+    fn test_result_ignored_while_recording() {
+        let mut app = test_app();
+        app.handle_command(AppCommand::StartRecording);
+        app.handle_command(AppCommand::RecordingResult("текст".to_string()));
+        assert_eq!(app.state, AppState::Recording);
+    }
+
+    #[test]
+    fn test_empty_result_returns_idle() {
+        let mut app = test_app();
+        app.handle_command(AppCommand::StartRecording);
+        fill_buffer(&app, vec![0.1; 100]);
+        app.handle_command(AppCommand::StopRecording);
+        assert_eq!(app.state, AppState::Idle);
+        app.handle_command(AppCommand::RecordingResult(String::new()));
+        assert_eq!(app.state, AppState::Idle);
+    }
+
+    #[test]
+    fn test_toggle_math_mode_flips_config() {
+        let mut app = test_app();
+        let before = app.config.math_mode;
+        app.handle_command(AppCommand::ToggleMathMode);
+        assert_ne!(app.config.math_mode, before);
+    }
+
+    #[test]
+    fn test_toggle_vad_flips_config_and_flag() {
+        let mut app = test_app();
+        let before = app.config.vad.enabled;
+        app.handle_command(AppCommand::ToggleVad);
+        assert_ne!(app.config.vad.enabled, before);
+        assert_eq!(app.vad_enabled.load(Ordering::SeqCst), app.config.vad.enabled);
+    }
+}

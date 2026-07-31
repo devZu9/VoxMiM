@@ -37,3 +37,78 @@ pub fn fix_text(text: &str, config: &TextFixConfig, user_dict: &UserDict) -> Str
 
     text
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::TextFixConfig;
+
+    fn cfg() -> TextFixConfig {
+        TextFixConfig {
+            fix_hallucinations: true,
+            fix_user_dict: true,
+            fix_repetitions: true,
+            fix_punctuation: true,
+            trailing_space: false,
+        }
+    }
+
+    fn dict() -> UserDict {
+        let d = UserDict::new();
+        d.add_entry("фыва", "привет");
+        d
+    }
+
+    #[test]
+    fn test_fix_all_on() {
+        // Галлюцинации вырезаются, пунктуация ставится, текст тримится
+        let text = fix_text("  привет [BLANK_AUDIO] мир  ", &cfg(), &UserDict::new());
+        assert_eq!(text, "Привет мир.");
+    }
+
+    #[test]
+    fn test_empty_input_stays_empty() {
+        let text = fix_text("", &cfg(), &UserDict::new());
+        assert_eq!(text, "");
+        assert_eq!(fix_text("   ", &cfg(), &UserDict::new()), "");
+    }
+
+    #[test]
+    fn test_user_dict_applied() {
+        let text = fix_text("фыва мир", &cfg(), &dict());
+        assert_eq!(text, "Привет мир.");
+    }
+
+    #[test]
+    fn test_user_dict_disabled() {
+        let mut c = cfg();
+        c.fix_user_dict = false;
+        let text = fix_text("фыва мир", &c, &dict());
+        assert_eq!(text, "Фыва мир.");
+    }
+
+    #[test]
+    fn test_trailing_space() {
+        let mut c = cfg();
+        c.trailing_space = true;
+        assert_eq!(fix_text("привет", &c, &UserDict::new()), "Привет. ");
+        assert_eq!(fix_text("", &c, &UserDict::new()), "");
+    }
+
+    #[test]
+    fn test_all_disabled_only_trims() {
+        let mut c = cfg();
+        c.fix_hallucinations = false;
+        c.fix_user_dict = false;
+        c.fix_repetitions = false;
+        c.fix_punctuation = false;
+        let text = fix_text("  да-да-да  ", &c, &dict());
+        assert_eq!(text, "да-да-да");
+    }
+
+    #[test]
+    fn test_repetitions_fixed_by_default() {
+        let text = fix_text("да-да-да", &cfg(), &UserDict::new());
+        assert_eq!(text, "Да.");
+    }
+}
