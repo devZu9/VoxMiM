@@ -71,7 +71,7 @@ def find_tray_icon(timeout=20):
 
 
 def open_menu(icon):
-    icon.click(button="right")
+    icon.click_input(button="right")
     menu = Desktop(backend="uia").window(class_name="#32768")
     menu.wait("exists", timeout=5)
     return menu
@@ -126,7 +126,7 @@ def click_menu_item(menu, title):
     try:
         item = menu.child_window(title=title, control_type="MenuItem")
         item.wait("exists", timeout=2)
-        item.click()
+        item.click_input()
         return True
     except Exception:
         return False
@@ -196,7 +196,7 @@ def main():
         item = menu.child_window(title=TOGGLE_ITEM, control_type="MenuItem")
         item.wait("exists", timeout=2)
         before = get_checked(item)
-        item.click()
+        item.click_input()
         time.sleep(0.5)
         menu2 = open_menu(icon)
         item2 = menu2.child_window(title=TOGGLE_ITEM, control_type="MenuItem")
@@ -207,7 +207,7 @@ def main():
         print(f"OK: галочка переключилась ({before} -> {after})")
         # Возвращаем исходное состояние (кликаем снова, если изменилось)
         if before is not None and after != before:
-            item2.click()
+            item2.click_input()
             time.sleep(0.3)
         menu2.close()
     except Exception as e:

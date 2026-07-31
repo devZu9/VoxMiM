@@ -20,7 +20,7 @@
 
 ### v0.* — В плане
 
-- [ ] **Ручной прогон smoke-скрипта трея** — запустить `scripts/tray_smoke/test_tray.py` с живым VoxMiM, доснять скриншоты RECORDING/LOADING
+- [x] **Ручной прогон smoke-скрипта трея** 🟢 *(v0.11.0 — 01.08.2026)* — `scripts/tray_smoke/test_tray.py` с живым VoxMiM: SMOKE ВСЁ ОК; скриншоты IDLE/RECORDING/LOADING в `tests/tray_snapshots/` (инструмент `capture_states.py`)
 - [ ] **Юнит-тесты форматтеров субтитров (SRT/VTT)** — покрыть фичу v0.11.0 (stt/engine.rs)
 - [ ] **HTTP API / DCP-интеграция** — REST API + JSON-RPC 2.0 + регистрация в DJA
 - [ ] **Wake Word редизайн** — пересобрать стабильную реализацию с учётом ошибок v0.8.0

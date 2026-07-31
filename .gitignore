@@ -19,3 +19,5 @@ TECH_SPECIFICATION.md
 /dicts/russian.txt
 /dicts/russian_surnames.txt
 .user_profile/
+__pycache__/
+tests/tray_snapshots/seq/
