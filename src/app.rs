@@ -1,3 +1,4 @@
+// v0.12.1: проверка синхронизации пользовательского словаря при пересборке
 use crate::audio::capture::AudioCapture;
 use crate::audio::processor::AudioProcessor;
 use crate::commands::executor::{CommandAction, CommandExecutor};

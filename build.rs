@@ -7,8 +7,44 @@ fn main() {
     {
         let _ = embed_resource::compile("resource/resource.rc", embed_resource::NONE);
     }
+    sync_from_target();
+    restore_config();
     copy_dicts();
     copy_lang();
+}
+
+/// Безусловная синхронизация пользовательских данных из target в корень.
+/// Забираем свежие файлы из рабочей копии ДО того, как build.rs перезапишет
+/// их из корня — иначе правки, сделанные в приложении, пропадут при cargo clean.
+fn sync_from_target() {
+    let src = target_dir();
+
+    let pairs = [
+        (src.join("dicts/user_dict.json"), Path::new("dicts/user_dict.json")),
+        (src.join("dicts/hallucinations.txt"), Path::new("dicts/hallucinations.txt")),
+        (src.join("config.json"), Path::new("config.json")),
+    ];
+    for (from, to) in &pairs {
+        if from.is_file() {
+            if let Some(parent) = to.parent() {
+                let _ = fs::create_dir_all(parent);
+            }
+            let _ = fs::copy(from, to);
+        }
+    }
+}
+
+/// Возврат настроек в target после cargo clean:
+/// если config.json в target отсутствует, а корневой бэкап есть — копируем обратно.
+fn restore_config() {
+    let to = target_dir().join("config.json");
+    if to.is_file() {
+        return;
+    }
+    let from = Path::new("config.json");
+    if from.is_file() {
+        let _ = fs::copy(from, &to);
+    }
 }
 
 fn target_dir() -> std::path::PathBuf {
