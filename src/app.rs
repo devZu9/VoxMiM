@@ -67,6 +67,8 @@ pub struct App {
     cmd_tx: Sender<AppCommand>,
     cmd_rx: Receiver<AppCommand>,
     settings_process: Option<std::process::Child>,
+    transcriber: Arc<Mutex<WhisperEngine>>,
+    detector: Arc<Mutex<WhisperEngine>>,
 }
 
 impl App {
@@ -125,8 +127,9 @@ impl App {
                 }
             }
         };
+        crate::stt::engine::set_bins_global(if bins_path.is_empty() { None } else { Some(bins_path) });
 
-        let mut trans = WhisperEngine::new(&bins_path);
+        let mut trans = WhisperEngine::new();
         trans.set_language(&config.language);
         trans.set_mode(crate::stt::engine::EngineMode::from_str(&config.engine_mode));
         crate::stt::engine::set_keep_wav_global(config.keep_wav);
@@ -143,7 +146,7 @@ impl App {
         }
         let transcriber = Arc::new(Mutex::new(trans));
 
-        let mut det = WhisperEngine::new(&bins_path);
+        let mut det = WhisperEngine::new();
         det.set_language(&config.language);
         det.set_mode(crate::stt::engine::EngineMode::from_str(&config.detector_mode));
         if config.detector_model.exists() {
@@ -519,6 +522,8 @@ impl App {
             cmd_tx,
             cmd_rx,
             settings_process: None,
+            transcriber: transcriber.clone(),
+            detector: detector.clone(),
         }
     }
 
@@ -541,6 +546,7 @@ impl App {
                     if crate::pipe::check_and_clear() {
                         self.reload_config();
                     }
+                    self.check_settings_exit();
                 }
                 Err(_) => break,
             }
@@ -649,9 +655,18 @@ impl App {
             match std::process::Command::new(&settings_exe).spawn() {
                 Ok(child) => {
                     self.settings_process = Some(child);
-                    log::info!("Окно настроек (отдельное приложение)");
+                    log::info!("Открыто окно настроек (отдельное приложение)");
                 }
                 Err(e) => log::error!("Не удалось запустить настройки: {e}"),
+            }
+        }
+    }
+
+    fn check_settings_exit(&mut self) {
+        if let Some(ref mut child) = self.settings_process {
+            if let Ok(Some(_)) = child.try_wait() {
+                self.settings_process = None;
+                log::info!("Закрыто окно настроек (отдельное приложение)");
             }
         }
     }
@@ -843,11 +858,10 @@ impl App {
             return;
         }
         let lang = self.config.language.clone();
-        let bins_dir = crate::config::bins_dir();
         let p = p.to_path_buf();
         let text = std::thread::scope(|s| {
             s.spawn(|| {
-                crate::stt::engine::transcribe_audio_file(&p, &model, &lang, &bins_dir)
+                crate::stt::engine::transcribe_audio_file(&p, &model, &lang)
             }).join().ok()
         }).and_then(|r| r.ok());
         match text {
@@ -874,12 +888,11 @@ impl App {
         }
         let lang = self.config.language.clone();
         let fmt = self.config.subtitle_format.clone();
-        let bins_dir = crate::config::bins_dir();
         let p = p.to_path_buf();
         let model = model.to_path_buf();
         std::thread::scope(|s| {
             s.spawn(|| {
-                crate::stt::engine::subtitle_audio_file(&p, &model, &lang, &fmt, &bins_dir)
+                crate::stt::engine::subtitle_audio_file(&p, &model, &lang, &fmt)
             }).join().ok()
         });
     }
@@ -975,11 +988,54 @@ impl App {
             crate::stt::engine::set_whisper_timeout(self.config.whisper_timeout_secs);
             changes.push(format!("whisper_timeout={}→{}", old.whisper_timeout_secs, self.config.whisper_timeout_secs));
         }
+        if old.whisper_bins_path != self.config.whisper_bins_path {
+            crate::stt::engine::set_bins_global(self.config.whisper_bins_path.clone());
+            changes.push(format!("whisper_bins={:?}→{:?}", old.whisper_bins_path, self.config.whisper_bins_path));
+        }
+
+        let engine_changed = old.whisper_bins_path != self.config.whisper_bins_path
+            || old.engine_mode != self.config.engine_mode
+            || old.detector_mode != self.config.detector_mode
+            || old.model_path != self.config.model_path
+            || old.detector_model != self.config.detector_model
+            || old.language != self.config.language;
 
         if changes.is_empty() {
             log::info!("Настройки перезагружены (без изменений)");
+        } else if engine_changed {
+            crate::ui::tray::set_recovering(true);
+            log::info!("Перезагружаем (иконка мигает): {}", changes.join(", "));
+            let transcriber = self.transcriber.clone();
+            let detector = self.detector.clone();
+            let restart_wake = self.config.wake_mode;
+            // Перезапуск в фоновом потоке: главный цикл не блокируется,
+            // иконка мигает всё время, пока идёт перезагрузка
+            std::thread::Builder::new()
+                .name("reload".into())
+                .spawn(move || {
+                    let mut errors = Vec::new();
+                    if let Ok(t) = transcriber.lock() {
+                        if let Err(e) = t.restart() {
+                            errors.push(format!("транскрайбер: {e}"));
+                        }
+                    }
+                    if restart_wake {
+                        if let Ok(d) = detector.lock() {
+                            if let Err(e) = d.restart() {
+                                errors.push(format!("детектор: {e}"));
+                            }
+                        }
+                    }
+                    crate::ui::tray::set_recovering(false);
+                    if errors.is_empty() {
+                        log::info!("Перезагрузка завершена. Готов к работе");
+                    } else {
+                        log::error!("Ошибка перезагрузки: {}", errors.join("; "));
+                    }
+                })
+                .ok();
         } else {
-            log::info!("Изменено: {}. Перезагружаем", changes.join(", "));
+            log::info!("Настройки применены: {}", changes.join(", "));
         }
     }
 }

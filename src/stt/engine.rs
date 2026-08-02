@@ -18,6 +18,14 @@ pub fn set_whisper_timeout(secs: u64) { WHISPER_TIMEOUT_SECS.store(secs, Orderin
 pub static ENGINE_MODE_SERVER: AtomicBool = AtomicBool::new(true);
 pub fn set_engine_mode_server(is_server: bool) { ENGINE_MODE_SERVER.store(is_server, Ordering::SeqCst); }
 
+/// Папка whisper из настроек (config.whisper_bins_path)
+static WHISPER_BINS: Mutex<Option<PathBuf>> = Mutex::new(None);
+
+/// Задать папку whisper из настроек
+pub fn set_bins_global(path: Option<String>) {
+    *WHISPER_BINS.lock().unwrap() = path.map(PathBuf::from);
+}
+
 pub fn taskkill_global() {
     let _ = Command::new("taskkill")
         .args(["/f", "/im", "whisper-server.exe"])
@@ -28,6 +36,10 @@ pub fn taskkill_global() {
 const SERVER_PORT: u16 = 8178;
 
 fn bins_dir() -> PathBuf {
+    let configured = WHISPER_BINS.lock().unwrap().clone();
+    if let Some(p) = configured {
+        if p.is_dir() { return p; }
+    }
     std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(|p| p.join("bins")))
@@ -227,7 +239,7 @@ pub struct WhisperEngine {
 }
 
 impl WhisperEngine {
-    pub fn new(_bins_path: &str) -> Self {
+    pub fn new() -> Self {
         let _ = std::fs::create_dir_all(&wavs_dir());
         Self {
             model_path: String::new(),
@@ -403,6 +415,20 @@ impl WhisperEngine {
         }
     }
 
+    /// Перезапуск сервера после перезагрузки настроек.
+    /// В one-shot-режиме ничего не делает.
+    pub fn restart(&self) -> Result<(), String> {
+        self.stop_server();
+        if ENGINE_MODE_SERVER.load(Ordering::SeqCst) {
+            let exe = server_exe();
+            if !exe.exists() {
+                return Err(format!("whisper-server не найден: {}", exe.display()));
+            }
+            self.ensure_server(&exe)?;
+        }
+        Ok(())
+    }
+
     pub fn detect(&self, samples: &[f32]) -> Result<String, String> {
         if ENGINE_MODE_SERVER.load(Ordering::SeqCst) {
             self.transcribe_server(samples)
@@ -449,10 +475,10 @@ pub fn transcribe_audio_file(
     input: &Path,
     model: &Path,
     lang: &str,
-    bins_dir: &Path,
 ) -> Result<String, String> {
     let wav = convert_to_wav(input)?;
-    let exe = bins_dir.join("whisper-cli.exe");
+    let bins = bins_dir();
+    let exe = bins.join("whisper-cli.exe");
     if !exe.exists() {
         return Err(format!("whisper-cli не найден: {}", exe.display()));
     }
@@ -461,7 +487,7 @@ pub fn transcribe_audio_file(
         .args(["--language", lang, "--no-timestamps"])
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
-        .current_dir(bins_dir)
+        .current_dir(&bins)
         .output()
         .map_err(|e| format!("whisper-cli: {e}"))?;
     let _ = std::fs::remove_file(&wav);
@@ -477,10 +503,10 @@ pub fn subtitle_audio_file(
     model: &Path,
     lang: &str,
     format: &str,
-    bins_dir: &Path,
 ) -> Result<(), String> {
     let wav = convert_to_wav(input)?;
-    let exe = bins_dir.join("whisper-cli.exe");
+    let bins = bins_dir();
+    let exe = bins.join("whisper-cli.exe");
     if !exe.exists() {
         return Err(format!("whisper-cli не найден: {}", exe.display()));
     }
@@ -494,7 +520,7 @@ pub fn subtitle_audio_file(
         .args(["--language", lang, out_flag, "-of", out_base.to_str().unwrap()])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
-        .current_dir(bins_dir)
+        .current_dir(&bins)
         .status()
         .map_err(|e| format!("whisper-cli: {e}"))?;
     let _ = std::fs::remove_file(&wav);

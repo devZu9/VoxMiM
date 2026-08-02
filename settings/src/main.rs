@@ -14,6 +14,7 @@ enum Msg {
     SetDetMode(bool),
     ToggleGpu,
     BrowseFolder,
+    BrowseWhisperBins,
     SelectTranscriberModel(usize),
     SelectDetectorModel(usize),
     ToggleWake,
@@ -83,6 +84,7 @@ struct SettingsApp {
     keep_wav: bool,
     show_console: bool,
     whisper_timeout: String,
+    whisper_bins: String,
     subtitle_format: String,
     locale: HashMap<String, String>,
     window_x: i32,
@@ -145,37 +147,103 @@ fn ensure_single_instance() -> bool {
     }
 }
 
-fn browse_for_folder() -> Option<String> {
+fn browse_for_folder(initial: &str) -> Option<String> {
+    use std::ffi::c_void;
+
     unsafe extern "system" {
-        fn SHBrowseForFolderW(lpbi: *const BROWSEINFOW) -> isize;
-        fn SHGetPathFromIDListW(pidl: isize, pszPath: *mut u16) -> i32;
-        fn CoTaskMemFree(pv: isize);
+        fn CoInitializeEx(pvReserved: *mut c_void, dwCoInit: u32) -> i32;
+        fn CoUninitialize();
+        fn CoCreateInstance(rclsid: *const u8, pUnkOuter: *mut c_void, dwClsContext: u32, riid: *const u8, ppv: *mut *mut c_void) -> i32;
+        fn CoTaskMemFree(pv: *mut c_void);
+        fn SHCreateItemFromParsingName(pszPath: *const u16, pbc: *mut c_void, riid: *const u8, ppv: *mut *mut c_void) -> i32;
     }
-    #[repr(C)]
-    #[allow(non_snake_case)]
-    struct BROWSEINFOW {
-        hwndOwner: isize, pidlRoot: isize, pszDisplayName: *mut u16,
-        lpszTitle: *const u16, ulFlags: u32, lpfn: isize,
-        lParam: isize, iImage: i32,
-    }
-    const BIF_RETURNONLYFSDIRS: u32 = 0x0001;
-    const BIF_NEWDIALOGSTYLE: u32 = 0x0040;
+
+    // CLSID_FileOpenDialog {DC1C5A9C-E88A-4DDE-A5A1-60F82A20AEF7}
+    const CLSID_FILE_OPEN_DIALOG: [u8; 16] = [0x9C, 0x5A, 0x1C, 0xDC, 0x8A, 0xE8, 0xDE, 0x4D, 0xA5, 0xA1, 0x60, 0xF8, 0x2A, 0x20, 0xAE, 0xF7];
+    // IID_IFileDialog {42F85136-DB7E-439C-85F1-E4075D135FC8}
+    const IID_IFILE_DIALOG: [u8; 16] = [0x36, 0x51, 0xF8, 0x42, 0x7E, 0xDB, 0x9C, 0x43, 0x85, 0xF1, 0xE4, 0x07, 0x5D, 0x13, 0x5F, 0xC8];
+    // IID_IShellItem {43826D1E-E718-42EE-BC55-A1E261C37BFE}
+    const IID_ISHELL_ITEM: [u8; 16] = [0x1E, 0x6D, 0x82, 0x43, 0x18, 0xE7, 0xEE, 0x42, 0xBC, 0x55, 0xA1, 0xE2, 0x61, 0xC3, 0x7B, 0xFE];
+
+    const CLSCTX_INPROC_SERVER: u32 = 0x1;
+    const COINIT_APARTMENTTHREADED: u32 = 0x2;
+    const FOS_PICKFOLDERS: u32 = 0x00000020;
+    const FOS_FORCEFILESYSTEM: u32 = 0x00000040;
+    const SIGDN_FILESYSPATH: u32 = 0x80058000;
+
     unsafe {
-        let title: Vec<u16> = "Выберите папку с моделями\0".encode_utf16().collect();
-        let mut display_buf = [0u16; 260];
-        let bi = BROWSEINFOW {
-            hwndOwner: 0, pidlRoot: 0, pszDisplayName: display_buf.as_mut_ptr(),
-            lpszTitle: title.as_ptr(), ulFlags: BIF_RETURNONLYFSDIRS | BIF_NEWDIALOGSTYLE,
-            lpfn: 0, lParam: 0, iImage: 0,
-        };
-        let pidl = SHBrowseForFolderW(&bi);
-        if pidl == 0 { return None; }
-        let mut path_buf = [0u16; 260];
-        SHGetPathFromIDListW(pidl, path_buf.as_mut_ptr());
-        CoTaskMemFree(pidl);
-        let path = String::from_utf16_lossy(&path_buf);
-        let path = path.trim_matches('\0').to_string();
-        if path.is_empty() { None } else { Some(path) }
+        let coinit = CoInitializeEx(std::ptr::null_mut(), COINIT_APARTMENTTHREADED);
+        let must_uninit = coinit == 0; // S_OK — инициализировали сами
+
+        let mut dialog: *mut c_void = std::ptr::null_mut();
+        let hr = CoCreateInstance(
+            CLSID_FILE_OPEN_DIALOG.as_ptr(), std::ptr::null_mut(), CLSCTX_INPROC_SERVER,
+            IID_IFILE_DIALOG.as_ptr(), &mut dialog,
+        );
+        if hr < 0 || dialog.is_null() {
+            if must_uninit { CoUninitialize(); }
+            return None;
+        }
+
+        // Vtable IFileDialog: IUnknown(0-2), IModalWindow::Show(3),
+        // SetOptions(9), SetFolder(12), SetTitle(17), GetResult(20)
+        let vtbl = *(dialog as *const *const usize);
+        type ComSetOptions = unsafe extern "system" fn(*mut c_void, u32) -> i32;
+        type ComSetPtr = unsafe extern "system" fn(*mut c_void, *mut c_void) -> i32;
+        type ComSetTitle = unsafe extern "system" fn(*mut c_void, *const u16) -> i32;
+        type ComGetPtr = unsafe extern "system" fn(*mut c_void, *mut *mut c_void) -> i32;
+        type ComShow = unsafe extern "system" fn(*mut c_void) -> i32;
+        type ComRelease = unsafe extern "system" fn(*mut c_void) -> u32;
+        type ComGetName = unsafe extern "system" fn(*mut c_void, u32, *mut *mut u16) -> i32;
+
+        let set_options: ComSetOptions = std::mem::transmute(*vtbl.add(9));
+        let _ = set_options(dialog, FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM);
+
+        // Открываем на выбранной ранее папке (если она задана)
+        if !initial.is_empty() {
+            let wide: Vec<u16> = initial.encode_utf16().chain(std::iter::once(0)).collect();
+            let mut item: *mut c_void = std::ptr::null_mut();
+            if SHCreateItemFromParsingName(wide.as_ptr(), std::ptr::null_mut(), IID_ISHELL_ITEM.as_ptr(), &mut item) >= 0 && !item.is_null() {
+                let set_folder: ComSetPtr = std::mem::transmute(*vtbl.add(12));
+                let _ = set_folder(dialog, item);
+                let release: ComRelease = std::mem::transmute(*(*(item as *const *const usize)).add(2));
+                let _ = release(item);
+            }
+        }
+
+        let title: Vec<u16> = "Выберите папку\0".encode_utf16().collect();
+        let set_title: ComSetTitle = std::mem::transmute(*vtbl.add(17));
+        let _ = set_title(dialog, title.as_ptr());
+
+        let show: ComShow = std::mem::transmute(*vtbl.add(3));
+        let hr_show = show(dialog);
+
+        let mut path: Option<String> = None;
+        let mut result: *mut c_void = std::ptr::null_mut();
+        if hr_show >= 0 {
+            let get_result: ComGetPtr = std::mem::transmute(*vtbl.add(20));
+            if get_result(dialog, &mut result) >= 0 && !result.is_null() {
+                let rvtbl = *(result as *const *const usize);
+                let get_name: ComGetName = std::mem::transmute(*rvtbl.add(5));
+                let mut name_ptr: *mut u16 = std::ptr::null_mut();
+                if get_name(result, SIGDN_FILESYSPATH, &mut name_ptr) >= 0 && !name_ptr.is_null() {
+                    let mut len = 0usize;
+                    while *name_ptr.add(len) != 0 { len += 1; }
+                    let wide_str: Vec<u16> = std::slice::from_raw_parts(name_ptr, len).to_vec();
+                    CoTaskMemFree(name_ptr as *mut c_void);
+                    let s = String::from_utf16_lossy(&wide_str);
+                    if !s.is_empty() { path = Some(s); }
+                }
+                let release: ComRelease = std::mem::transmute(*rvtbl.add(2));
+                let _ = release(result);
+            }
+        }
+
+        let release: ComRelease = std::mem::transmute(*vtbl.add(2));
+        let _ = release(dialog);
+
+        if must_uninit { CoUninitialize(); }
+        path
     }
 }
 
@@ -359,6 +427,7 @@ fn set_from_value(app: &mut SettingsApp, cfg: &serde_json::Value) {
     app.cur_lang = if cfg.get("language").and_then(|v| v.as_str()).unwrap_or("ru") == "en" { 1 } else { 0 };
     app.cmd_max_words = cfg.get("command_max_words").and_then(|v| v.as_i64()).unwrap_or(3).to_string();
     app.whisper_timeout = cfg.get("whisper_timeout_secs").and_then(|v| v.as_i64()).unwrap_or(120).to_string();
+    app.whisper_bins = cfg.get("whisper_bins_path").and_then(|v| v.as_str()).unwrap_or_default().to_string();
     app.cur_tab = cfg.get("cur_tab").and_then(|v| v.as_i64()).unwrap_or(0) as usize;
     app.subtitle_format = cfg.get("subtitle_format").and_then(|v| v.as_str()).unwrap_or("srt").to_string();
     app.window_x = cfg.get("window_x").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
@@ -423,6 +492,8 @@ fn save_from_ui(app: &SettingsApp, cfg: &mut serde_json::Value) {
         let n = n.clamp(10, 180);
         set(cfg, &["whisper_timeout_secs"], serde_json::json!(n));
     }
+    let bins = app.whisper_bins.trim();
+    set(cfg, &["whisper_bins_path"], if bins.is_empty() { serde_json::Value::Null } else { serde_json::json!(bins) });
     set(cfg, &["language"], serde_json::json!(if app.cur_lang == 1 { "en" } else { "ru" }));
     set(cfg, &["cur_tab"], serde_json::json!(app.cur_tab));
     set(cfg, &["subtitle_format"], serde_json::json!(app.subtitle_format));
@@ -456,9 +527,17 @@ impl App for SettingsApp {
             Msg::SetDetMode(v) => { self.det_server = v; self.apply(); }
             Msg::ToggleGpu => { self.use_gpu = !self.use_gpu; self.apply(); }
             Msg::BrowseFolder => {
-                if let Some(dir) = browse_for_folder() {
+                if let Some(dir) = browse_for_folder(&self.model_dir) {
+                    send_pipe_message(format!("folder:{dir}").as_bytes());
                     self.model_dir = dir;
                     self.models = scan_models(&self.model_dir);
+                }
+            }
+            Msg::BrowseWhisperBins => {
+                if let Some(dir) = browse_for_folder(&self.whisper_bins) {
+                    send_pipe_message(format!("folder:{dir}").as_bytes());
+                    self.whisper_bins = dir;
+                    self.apply();
                 }
             }
             Msg::SelectTranscriberModel(i) => {
@@ -735,6 +814,7 @@ impl SettingsApp {
         let tso = self.vad_start_timeout.clone();
         let thr = self.vad_threshold.clone();
         let sec = self.t("settings.seconds");
+        let bins = self.whisper_bins.clone();
 
         // Собираем каждый stepper как Element до вложения
         let a = text(sec);
@@ -784,6 +864,12 @@ impl SettingsApp {
             row().gap(SP2).items_center().children([
                 text(self.t("settings.vad_timeout")),
                 col().gap(SP1).items_center().children(st_t).into(),
+            ]),
+            divider(),
+            row().gap(SP2).items_center().children([
+                text(self.t("settings.whisper_bins")),
+                text_input(&bins).width(250.0).into(),
+                button(self.t("settings.browse")).on_click(Msg::BrowseWhisperBins).into(),
             ]),
             spacer(),
         ])
@@ -871,7 +957,7 @@ fn main() {
         fix_repetitions: true, fix_punctuation: true, cmd_max_words: "3".into(),
         math_mode: false, noise_filter: true, warmup: true, show_result: false,
         log_enable: false, log_dir: String::new(), trailing_space: false,
-        keep_wav: false, show_console: true, whisper_timeout: "120".into(), subtitle_format: "srt".into(), cur_lang: 0, locale: HashMap::new(),
+        keep_wav: false, show_console: true, whisper_timeout: "120".into(), whisper_bins: String::new(), subtitle_format: "srt".into(), cur_lang: 0, locale: HashMap::new(),
         window_x: 0, window_y: 0, proxy: None, last_config_mtime: 0,
     };
     fenestra::run(app, opts);
@@ -891,7 +977,7 @@ mod tests {
             fix_repetitions: true, fix_punctuation: true, cmd_max_words: "3".into(),
             math_mode: false, noise_filter: true, warmup: true, show_result: false,
             log_enable: false, log_dir: String::new(), trailing_space: false,
-            keep_wav: false, show_console: true, whisper_timeout: "120".into(), subtitle_format: "srt".into(), cur_lang: 0, locale: SettingsApp::load_locale("ru"),
+            keep_wav: false, show_console: true, whisper_timeout: "120".into(), whisper_bins: String::new(), subtitle_format: "srt".into(), cur_lang: 0, locale: SettingsApp::load_locale("ru"),
             window_x: 0, window_y: 0, proxy: None, last_config_mtime: 0,
         }
     }
@@ -1048,6 +1134,7 @@ mod tests {
             "language": "en",
             "command_max_words": 5,
             "whisper_timeout_secs": 60,
+            "whisper_bins_path": "C:\\whisper",
             "subtitle_format": "vtt",
             "dark_mode": true,
             "cur_tab": 2,
@@ -1068,6 +1155,7 @@ mod tests {
         assert_eq!(app.cur_lang, 1);
         assert_eq!(app.cmd_max_words, "5");
         assert_eq!(app.whisper_timeout, "60");
+        assert_eq!(app.whisper_bins, "C:\\whisper");
         assert_eq!(app.subtitle_format, "vtt");
         assert!(app.dark_mode);
         assert_eq!(app.cur_tab, 2);
@@ -1086,6 +1174,7 @@ mod tests {
         app.cur_lang = 1;
         app.subtitle_format = "vtt".into();
         app.whisper_timeout = "45".into();
+        app.whisper_bins = "C:\\whisper".into();
         let mut cfg = serde_json::json!({});
         save_from_ui(&app, &mut cfg);
         assert_eq!(cfg["engine_mode"], "server");
@@ -1097,5 +1186,6 @@ mod tests {
         assert_eq!(cfg["language"], "en");
         assert_eq!(cfg["subtitle_format"], "vtt");
         assert_eq!(cfg["whisper_timeout_secs"], 45);
+        assert_eq!(cfg["whisper_bins_path"], "C:\\whisper");
     }
 }

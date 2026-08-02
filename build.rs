@@ -9,7 +9,6 @@ fn main() {
     }
     copy_dicts();
     copy_lang();
-    copy_bins();
 }
 
 fn target_dir() -> std::path::PathBuf {
@@ -66,24 +65,6 @@ fn copy_lang() {
         if path.is_file() {
             let fname = path.file_name().unwrap();
             let dst = dest.join(&fname);
-            let _ = fs::copy(&path, &dst);
-        }
-    }
-}
-
-fn copy_bins() {
-    let dest = target_dir().join("bins");
-    let _ = fs::create_dir_all(&dest);
-
-    let src = Path::new("bins");
-    if !src.exists() { return; }
-
-    for entry in fs::read_dir(src).unwrap() {
-        let entry = entry.unwrap();
-        let path = entry.path();
-        if path.is_file() {
-            let fname = path.file_name().unwrap();
-            let dst = dest.join(fname);
             let _ = fs::copy(&path, &dst);
         }
     }

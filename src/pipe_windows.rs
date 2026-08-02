@@ -41,16 +41,19 @@ pub fn start_listener() {
 
                     ConnectNamedPipe(pipe, std::ptr::null_mut());
 
-                    let mut buf = [0u8; 64];
+                    let mut buf = [0u8; 1024];
                     let mut read: u32 = 0;
-                    let result = ReadFile(pipe, buf.as_mut_ptr() as *mut c_void, 64, &mut read, std::ptr::null_mut());
+                    let result = ReadFile(pipe, buf.as_mut_ptr() as *mut c_void, 1024, &mut read, std::ptr::null_mut());
                     if result != 0 && read > 0 {
                         let msg = String::from_utf8_lossy(&buf[..read as usize]);
                         let msg = msg.trim();
                         if msg == "reload" {
                             SETTINGS_CHANGED.store(true, Ordering::SeqCst);
+                            log::info!("Сигнал от настроек: reload");
                         } else if msg == "debug" {
                             log::info!("Сигнал из окна настроек: debug — связь работает");
+                        } else if let Some(path) = folder_from_msg(msg) {
+                            log::info!("Выбрана папка: {path}");
                         }
                     }
 
@@ -60,6 +63,24 @@ pub fn start_listener() {
             }
         })
         .ok();
+}
+
+/// Путь из сообщения "folder:<путь>" (присылается окном настроек при выборе папки)
+fn folder_from_msg(msg: &str) -> Option<&str> {
+    msg.strip_prefix("folder:").filter(|p| !p.is_empty())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_folder_from_msg() {
+        assert_eq!(folder_from_msg("folder:C:\\whisper\\bins"), Some("C:\\whisper\\bins"));
+        assert_eq!(folder_from_msg("folder:"), None);
+        assert_eq!(folder_from_msg("reload"), None);
+        assert_eq!(folder_from_msg("debug"), None);
+    }
 }
 
 pub fn check_and_clear() -> bool {

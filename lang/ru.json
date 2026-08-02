@@ -72,5 +72,6 @@
   "dialog.add_hall.title": "Добавить фразу галлюцинации",
   "dialog.add_hall.label": "Фраза (слова через пробел):",
   "settings.whisper_timeout": "Таймаут распознавания (сек):",
+  "settings.whisper_bins": "Папка whisper (bins):",
   "tray.menu.show_log": "Показать лог…"
 }

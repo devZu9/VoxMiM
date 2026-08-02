@@ -72,5 +72,6 @@
   "dialog.add_hall.title": "Add Hallucination Phrase",
   "dialog.add_hall.label": "Phrase (space-separated words):",
   "settings.whisper_timeout": "Recognition timeout (sec):",
+  "settings.whisper_bins": "Whisper folder (bins):",
   "tray.menu.show_log": "Show Log…"
 }
