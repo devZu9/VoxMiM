@@ -50,7 +50,7 @@ ui/        — tray (Win32/macOS) + tray_menu (модель меню) + наст
 - Юнит-тесты: 57+ `#[test]` (`cargo test --workspace` на Windows; на macOS — `cargo test -p voxmim --bin voxmim`, т.к. `voxmim-settings` не собирается без cfg-гейтов — задание 11 аудита).
 - Покрытие: llvm-cov ~35% строк (точка отсчёта 31.07.2026).
 - Внедрение канона `_for_OpenCode`: актуально (apply-audit 2.7.2, 21.08.2026) — скиллы-линки, команды codecheck/testing, аудит `_for_OpenCode/audits/VoxMiM.md`.
-- Последняя сессия: 21.08.2026 — актуализация внедрения канона.
+- Последняя сессия: 21.08.2026 — v0.13.0: устойчивость whisper-сервера, валидация моделей, модальное окно «Модель не подходит», WM_TASKBARCREATED.
 
 ## Сборка и запуск
 
