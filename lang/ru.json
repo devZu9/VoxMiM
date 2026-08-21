@@ -73,5 +73,7 @@
   "dialog.add_hall.label": "Фраза (слова через пробел):",
   "settings.whisper_timeout": "Таймаут распознавания (сек):",
   "settings.whisper_bins": "Папка whisper (bins):",
-  "tray.menu.show_log": "Показать лог…"
+  "tray.menu.show_log": "Показать лог…",
+  "dialog.model_invalid.title": "VoxMiM — модель не подходит",
+  "dialog.model_invalid.message": "Выбранная модель не подходит для VoxMiM.\nПоддерживаются только модели whisper/GGUF (файлы PyTorch и другие форматы не работают).\nМодель осталась прежней."
 }

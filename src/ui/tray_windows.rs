@@ -12,12 +12,16 @@ const WM_COMMAND: u32 = 0x0111;
 const WM_TIMER: u32 = 0x0113;
 const WM_DESTROY: u32 = 0x0002;
 const WM_NULL: u32 = 0x0000;
+const WM_TASKBARCREATED: u32 = 0x0006;
 
 const NIM_MODIFY: u32 = 0x00000001;
 const TIMER_ID: usize = 1;
 
 static TRAY_AUTOSTOP: AtomicBool = AtomicBool::new(false);
 static TRAY_WAKE: AtomicBool = AtomicBool::new(false);
+
+/// Иконку нужно пересоздать (проводник перезапущен, NIM_ADD ещё не принят).
+static TRAY_RECREATE_PENDING: AtomicBool = AtomicBool::new(false);
 
 unsafe extern "system" {
     fn RegisterClassW(wc: *const WNDCLASSW) -> u16;
@@ -217,7 +221,10 @@ impl TrayManager {
                 if i < 127 { nid.szTip[i] = c; }
             }
 
-            Shell_NotifyIconW(NIM_ADD, &nid);
+            if Shell_NotifyIconW(NIM_ADD, &nid) == 0 {
+                TRAY_RECREATE_PENDING.store(true, Ordering::SeqCst);
+                log::warn!("Трей-иконка: NIM_ADD не сработал при старте, повторяю...");
+            }
             log::info!("Трей-иконка запущена");
 
             *TRAY_GUID.lock().unwrap() = Some(nid.guidItem);
@@ -234,10 +241,66 @@ impl TrayManager {
     }
 }
 
+/// Собрать NOTIFYICONDATAW для добавления/обновления иконки трея.
+fn build_nid(hicon: *mut std::ffi::c_void) -> NOTIFYICONDATAW {
+    unsafe {
+        let mut nid: NOTIFYICONDATAW = std::mem::zeroed();
+        nid.cbSize = std::mem::size_of::<NOTIFYICONDATAW>() as u32;
+        nid.hWnd = TRAY_HWND.load(Ordering::SeqCst) as *mut std::ffi::c_void;
+        nid.uID = 1;
+        nid.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_GUID;
+        nid.uCallbackMessage = WM_TRAYICON;
+        nid.hIcon = hicon;
+        nid.guidItem = TRAY_GUID.lock().unwrap().unwrap_or([0; 16]);
+        let tip: Vec<u16> = "VoxMiM\0".encode_utf16().collect();
+        for (i, &c) in tip.iter().enumerate() {
+            if i < 127 { nid.szTip[i] = c; }
+        }
+        nid
+    }
+}
+
+/// Пересоздать иконку (NIM_ADD). Возвращает true, только если трей принял иконку.
+unsafe fn recreate_tray_icon() -> bool {
+    let ready = TRAY_READY.lock().unwrap()
+        .as_ref()
+        .map(|r| r.load(Ordering::SeqCst))
+        .unwrap_or(false);
+    let recovering = TRAY_RECOVERING.load(Ordering::SeqCst);
+    let recording = TRAY_RECORDING.lock().unwrap()
+        .as_ref()
+        .map(|r| r.load(Ordering::SeqCst))
+        .unwrap_or(false);
+    let hicon = if !ready || recovering {
+        TRAY_HICON_LOADING.load(Ordering::SeqCst)
+    } else if recording {
+        TRAY_HICON_REC.load(Ordering::SeqCst)
+    } else {
+        TRAY_HICON_IDLE.load(Ordering::SeqCst)
+    } as *mut std::ffi::c_void;
+    unsafe {
+        let nid = build_nid(hicon);
+        Shell_NotifyIconW(NIM_ADD, &nid) != 0
+    }
+}
+
 unsafe extern "system" fn wnd_proc(
     hwnd: *mut std::ffi::c_void, msg: u32, wparam: usize, lparam: isize,
 ) -> isize {
     match msg {
+        WM_TASKBARCREATED => {
+            // Проводник перезапущен — пересоздаём иконку (с проверкой принятия)
+            unsafe {
+                if recreate_tray_icon() {
+                    TRAY_RECREATE_PENDING.store(false, Ordering::SeqCst);
+                    log::info!("Трей-иконка восстановлена (WM_TASKBARCREATED)");
+                } else {
+                    TRAY_RECREATE_PENDING.store(true, Ordering::SeqCst);
+                    log::warn!("Трей-иконка: проводник ещё не готов, повторяю через таймер...");
+                }
+            }
+            return 0;
+        }
         WM_TRAYICON => {
             let event = (lparam & 0xFFFF) as u32;
             if event == WM_RBUTTONUP {
@@ -248,6 +311,14 @@ unsafe extern "system" fn wnd_proc(
         WM_TIMER => {
             if wparam == TIMER_ID {
                 unsafe {
+                    // Проводник перезапущен, иконка ещё не принята — повторяем NIM_ADD
+                    if TRAY_RECREATE_PENDING.load(Ordering::SeqCst) {
+                        if recreate_tray_icon() {
+                            TRAY_RECREATE_PENDING.store(false, Ordering::SeqCst);
+                            log::info!("Трей-иконка восстановлена (повторная попытка)");
+                        }
+                    }
+
                     let ready = TRAY_READY.lock().unwrap()
                         .as_ref()
                         .map(|r| r.load(Ordering::SeqCst))

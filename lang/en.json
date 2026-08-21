@@ -73,5 +73,7 @@
   "dialog.add_hall.label": "Phrase (space-separated words):",
   "settings.whisper_timeout": "Recognition timeout (sec):",
   "settings.whisper_bins": "Whisper folder (bins):",
-  "tray.menu.show_log": "Show Log…"
+  "tray.menu.show_log": "Show Log…",
+  "dialog.model_invalid.title": "VoxMiM — model is not compatible",
+  "dialog.model_invalid.message": "The selected model is not compatible with VoxMiM.\nOnly whisper/GGUF models are supported (PyTorch and other formats do not work).\nThe previous model is kept."
 }

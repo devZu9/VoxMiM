@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 
 
@@ -26,14 +26,13 @@ pub fn set_bins_global(path: Option<String>) {
     *WHISPER_BINS.lock().unwrap() = path.map(PathBuf::from);
 }
 
-pub fn taskkill_global() {
-    let _ = Command::new("taskkill")
-        .args(["/f", "/im", "whisper-server.exe"])
-        .stdout(Stdio::null()).stderr(Stdio::null())
-        .spawn();
-}
-
 const SERVER_PORT: u16 = 8178;
+
+/// Аварийное завершение сервера (таймаут, поток висит — ts.lock() недоступен).
+/// Убивает только процесс на нашем порту — чужие whisper-server не трогает.
+pub fn kill_server_global() {
+    crate::stt::server::kill_own_and_wait(None, SERVER_PORT);
+}
 
 fn bins_dir() -> PathBuf {
     let configured = WHISPER_BINS.lock().unwrap().clone();
@@ -149,21 +148,6 @@ fn build_multipart(file_data: &[u8], file_name: &str, lang: &str) -> Vec<u8> {
     body
 }
 
-fn http_get(path: &str) -> Result<String, String> {
-    let mut stream = TcpStream::connect_timeout(
-        &"127.0.0.1:8178".parse().unwrap(), Duration::from_secs(5),
-    ).map_err(|e| format!("TCP: {e}"))?;
-    stream.set_read_timeout(Some(Duration::from_secs(5)))
-        .map_err(|e| format!("set_read_timeout: {e}"))?;
-    stream.set_write_timeout(Some(Duration::from_secs(5)))
-        .map_err(|e| format!("set_write_timeout: {e}"))?;
-    let req = format!("GET {path} HTTP/1.1\r\nHost: 127.0.0.1:8178\r\nConnection: close\r\n\r\n");
-    stream.write_all(req.as_bytes()).map_err(|e| format!("HTTP write: {e}"))?;
-    let mut resp = String::new();
-    stream.read_to_string(&mut resp).map_err(|e| format!("HTTP read: {e}"))?;
-    Ok(resp)
-}
-
 fn http_post(path: &str, content_type: &str, body: &[u8]) -> Result<String, String> {
     let mut stream = TcpStream::connect_timeout(
         &"127.0.0.1:8178".parse().unwrap(), Duration::from_secs(5),
@@ -208,14 +192,6 @@ fn wav_path() -> PathBuf {
     }
 }
 
-fn capture_stderr(child: &mut Child) -> String {
-    if let Some(ref mut stderr) = child.stderr {
-        let mut buf = String::new();
-        let _ = stderr.read_to_string(&mut buf);
-        buf
-    } else { String::new() }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum EngineMode {
     OneShot,
@@ -236,6 +212,7 @@ pub struct WhisperEngine {
     language: String,
     input_rate: u32,
     server: Mutex<Option<Child>>,
+    startup_lock: Mutex<()>,
 }
 
 impl WhisperEngine {
@@ -246,6 +223,7 @@ impl WhisperEngine {
             language: "ru".to_string(),
             input_rate: 48000,
             server: Mutex::new(None),
+            startup_lock: Mutex::new(()),
         }
     }
 
@@ -260,6 +238,12 @@ impl WhisperEngine {
     pub fn load_model<P: AsRef<Path>>(&mut self, path: P) -> Result<(), String> {
         let path = path.as_ref();
         if !path.exists() { return Err(format!("Модель не найдена: {}", path.display())); }
+        if !crate::stt::server::is_whisper_model(path) {
+            return Err(format!(
+                "Модель несовместима с whisper.cpp (нужен формат whisper/GGUF, не PyTorch): {}",
+                path.display()
+            ));
+        }
         self.model_path = path.to_string_lossy().to_string();
         log::debug!("Engine: модель: {}", path.display());
         Ok(())
@@ -352,53 +336,33 @@ impl WhisperEngine {
     fn ensure_server(&self, exe: &Path) -> Result<(), String> {
         if self.is_server_alive() { return Ok(()); }
 
-        // Убиваем старые копии whisper-server на порту 8178
-        #[cfg(target_os = "windows")]
-        let _ = Command::new("taskkill")
-            .args(["/f", "/im", "whisper-server.exe"])
-            .stdout(Stdio::null()).stderr(Stdio::null())
-            .spawn().map(|mut c| { let _ = c.wait(); });
-        #[cfg(not(target_os = "windows"))]
-        let _ = Command::new("killall")
-            .arg("whisper-server")
-            .stdout(Stdio::null()).stderr(Stdio::null())
-            .spawn().map(|mut c| { let _ = c.wait(); });
+        // Сериализуем запуск: два потока не должны стартовать сервер одновременно
+        let _guard = self.startup_lock.lock().unwrap();
+        if self.is_server_alive() { return Ok(()); }
 
-        log::info!("Server: запуск {}", exe.display());
+        // Убиваем ТОЛЬКО свой сервер (по PID + остаток на нашем порту),
+        // дожидаемся освобождения порта — на порту гарантированно новый процесс
+        let own_pid = self.server.lock().unwrap().as_ref().map(|c| c.id());
+        crate::stt::server::kill_own_and_wait(own_pid, SERVER_PORT);
+        if !crate::stt::server::wait_port_free(SERVER_PORT, Duration::from_secs(5)) {
+            return Err(format!("Порт {SERVER_PORT} занят другим процессом"));
+        }
+
         if self.model_path.is_empty() { return Err("Модель не задана".to_string()); }
+        if !crate::stt::server::is_whisper_model(Path::new(&self.model_path)) {
+            return Err(format!("Модель несовместима с whisper.cpp: {}", self.model_path));
+        }
 
         let bins = bins_dir();
-        let port = SERVER_PORT.to_string();
-        let mut child = Command::new(exe)
-            .args(["-m", &self.model_path, "--port", &port])
-            .args(["--language", &self.language, "--threads", "4"])
-            .stdout(Stdio::null()).stderr(Stdio::piped())
-            .current_dir(&bins).spawn()
-            .map_err(|e| format!("spawn: {e}"))?;
-
+        let start = Instant::now();
+        let mut child = crate::stt::server::spawn_server(
+            exe, &self.model_path, &self.language, 4, SERVER_PORT, &bins)?;
         log::info!("Server: PID={}", child.id());
 
-        let start = std::time::Instant::now();
-        loop {
-            if start.elapsed() > Duration::from_secs(30) {
-                let stderr = capture_stderr(&mut child);
-                let _ = child.kill(); let _ = child.wait();
-                return Err(format!("Таймаут. stderr: {stderr}"));
-            }
-            if !child.try_wait().map(|s| s.is_none()).unwrap_or(false) {
-                let stderr = capture_stderr(&mut child);
-                let _ = child.kill(); let _ = child.wait();
-                return Err(format!("Сервер умер. stderr: {stderr}"));
-            }
-            match http_get("/health") {
-                Ok(r) if r.contains("200 OK") || r.contains("200 ok") => {
-                    *self.server.lock().unwrap() = Some(child);
-                    log::info!("Server: готов за {}ms", start.elapsed().as_millis());
-                    return Ok(());
-                }
-                _ => { std::thread::sleep(Duration::from_millis(200)); }
-            }
-        }
+        crate::stt::server::wait_ready(&mut child, SERVER_PORT, Duration::from_secs(30))?;
+        log::info!("Server: готов за {}ms", start.elapsed().as_millis());
+        *self.server.lock().unwrap() = Some(child);
+        Ok(())
     }
 
     fn is_server_alive(&self) -> bool {
@@ -409,9 +373,10 @@ impl WhisperEngine {
     }
 
     pub fn stop_server(&self) {
-        if self.server.lock().unwrap().take().is_some() {
-            taskkill_global();
-            log::info!("Server: stop (taskkill)");
+        let own_pid = self.server.lock().unwrap().take().map(|c| c.id());
+        if own_pid.is_some() {
+            crate::stt::server::kill_own_and_wait(own_pid, SERVER_PORT);
+            log::info!("Server: stop (kill по PID/порту)");
         }
     }
 

@@ -410,8 +410,8 @@ impl App {
                             // Таймаут — поток ВИСИТ, ts.lock() трогать НЕЛЬЗЯ!
                             log::error!("Whisper: таймаут {}с — сервер не ответил", timeout);
 
-                            log::info!("Server: убиваю через taskkill...");
-                            crate::stt::engine::taskkill_global();
+                            log::info!("Server: убиваю по PID/порту...");
+                            crate::stt::engine::kill_server_global();
 
                             let pp = pending_path();
                             log::info!("Pending: сохраняю {} сэмплов...", samples.len());
@@ -903,6 +903,29 @@ impl App {
         let old = self.config.clone();
         self.config = new_cfg;
 
+        // Валидация моделей: несовместимую модель не принимаем —
+        // возвращаем прежнюю модель в конфиг и показываем сообщение
+        if old.model_path != self.config.model_path {
+            if let Err(e) = self.transcriber.lock().unwrap().load_model(&self.config.model_path) {
+                log::error!("Модель не подходит: {e}");
+                self.config.model_path = old.model_path.clone();
+                if let Err(save_err) = self.config.save() {
+                    log::error!("Не удалось вернуть прежнюю модель в конфиг: {save_err}");
+                }
+                show_model_error(&self.config.model_path.display().to_string());
+            }
+        }
+        if old.detector_model != self.config.detector_model {
+            if let Err(e) = self.detector.lock().unwrap().load_model(&self.config.detector_model) {
+                log::error!("Модель детектора не подходит: {e}");
+                self.config.detector_model = old.detector_model.clone();
+                if let Err(save_err) = self.config.save() {
+                    log::error!("Не удалось вернуть прежнюю модель детектора в конфиг: {save_err}");
+                }
+                show_model_error(&self.config.detector_model.display().to_string());
+            }
+        }
+
         if self.config.vad.enabled != old.vad.enabled {
             crate::ui::tray::set_vad_state(self.config.vad.enabled);
             self.vad_enabled.store(self.config.vad.enabled, Ordering::SeqCst);
@@ -1038,6 +1061,34 @@ impl App {
         } else {
             log::info!("Настройки применены: {}", changes.join(", "));
         }
+    }
+}
+
+/// Модальное окно об ошибке модели (Windows). На других платформах — лог.
+fn show_model_error(model: &str) {
+    let title = crate::lang::t("dialog.model_invalid.title");
+    let message = format!(
+        "{}\n\n{}",
+        crate::lang::t("dialog.model_invalid.message"),
+        model
+    );
+    #[cfg(target_os = "windows")]
+    {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONWARNING, MB_OK};
+        let title_utf16: Vec<u16> = format!("{title}\0").encode_utf16().collect();
+        let message_utf16: Vec<u16> = format!("{message}\0").encode_utf16().collect();
+        unsafe {
+            MessageBoxW(
+                std::ptr::null_mut(),
+                message_utf16.as_ptr(),
+                title_utf16.as_ptr(),
+                MB_OK | MB_ICONWARNING,
+            );
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        log::error!("Модель не подходит (показ окна не поддерживается): {message}");
     }
 }
 
