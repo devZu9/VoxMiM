@@ -60,7 +60,10 @@ pub struct App {
     insert_tx: crossbeam_channel::Sender<String>,
     executor: CommandExecutor,
     _hotkey: Option<HotkeyListener>,
-    _audio: Option<AudioCapture>,
+    audio: Option<AudioCapture>,
+    /// Клоны отправителей аудио — нужны, чтобы перезапустить захват
+    /// на другом микрофоне без пересоздания приёмников (процессор, wake).
+    capture_txs: Vec<mpsc::Sender<Vec<f32>>>,
     recording: Arc<AtomicBool>,
     audio_buf: Arc<Mutex<Vec<f32>>>,
     vad_enabled: Arc<AtomicBool>,
@@ -179,17 +182,21 @@ impl App {
         // Аудио-захват
         let mut audio = AudioCapture::new();
         let devices = AudioCapture::list_devices();
-        log::info!("Доступные микрофоны:");
+        log::info!("Доступные микрофоны ({}):", devices.len());
         for (name, idx) in &devices {
             log::info!("  [{idx}] {name}");
         }
+        if let Some(name) = AudioCapture::default_device_name() {
+            log::info!("Системный микрофон по умолчанию: {name}");
+        }
 
-        if let Some(ref name) = config.mic_name {
-            if let Some(idx) = config.mic_index {
-                let _ = audio.select_device(name, idx);
-            }
-        } else if let Some((name, idx)) = devices.first() {
-            let _ = audio.select_device(name, *idx);
+        // Выбор устройства: сохранённое в настройках, иначе системное по умолчанию
+        let mic_result = match config.mic_name.as_deref() {
+            Some(name) => audio.select_device(name, config.mic_index.unwrap_or(0)),
+            None => audio.select_default(),
+        };
+        if let Err(e) = mic_result {
+            log::error!("Микрофон: {e}");
         }
 
         let (audio_tx, audio_rx) = mpsc::channel::<Vec<f32>>();
@@ -198,7 +205,7 @@ impl App {
         if config.wake_mode {
             capture_txs.push(wake_tx);
         }
-        let capture_rate = match audio.start_capture_multi(capture_txs, config.capture_sample_rate) {
+        let capture_rate = match audio.start_capture_multi(capture_txs.clone(), config.capture_sample_rate) {
             Ok(rate) => {
                 log::info!("Аудио-захват: {rate}Hz");
                 Some(rate)
@@ -515,7 +522,8 @@ impl App {
             insert_tx,
             executor,
             _hotkey: Some(hotkey),
-            _audio: Some(audio),
+            audio: Some(audio),
+            capture_txs,
             recording,
             audio_buf,
             vad_enabled,
@@ -898,6 +906,40 @@ impl App {
         });
     }
 
+    /// Сменить микрофон на лету: остановить поток и открыть выбранный заново.
+    fn switch_microphone(&mut self, name: Option<String>) {
+        let txs = self.capture_txs.clone();
+        let Some(audio) = self.audio.as_mut() else { return };
+
+        audio.stop();
+        let result = match name.as_deref() {
+            Some(n) => audio.select_device(n, 0),
+            None => audio.select_default(),
+        };
+        if let Err(e) = result {
+            log::error!("Смена микрофона: {e}");
+            return;
+        }
+
+        let preferred = self.config.capture_sample_rate;
+        match audio.start_capture_multi(txs, preferred) {
+            Ok(rate) => {
+                if self.config.capture_sample_rate != Some(rate) {
+                    self.config.capture_sample_rate = Some(rate);
+                    let _ = self.config.save();
+                }
+                if let Ok(mut t) = self.transcriber.lock() {
+                    t.set_input_rate(rate);
+                }
+                if let Ok(mut d) = self.detector.lock() {
+                    d.set_input_rate(rate);
+                }
+                log::info!("Микрофон переключён, захват {rate} Гц");
+            }
+            Err(e) => log::error!("Аудио-захват после смены микрофона: {e}"),
+        }
+    }
+
     fn reload_config(&mut self) {
         let new_cfg = Config::load();
         let old = self.config.clone();
@@ -931,11 +973,18 @@ impl App {
             self.vad_enabled.store(self.config.vad.enabled, Ordering::SeqCst);
             crate::input::hotkeys::set_vad_enabled(self.config.vad.enabled);
         }
+        if old.mic_name != self.config.mic_name {
+            let mic = self.config.mic_name.clone();
+            self.switch_microphone(mic);
+        }
         if self.config.language != old.language {
             crate::lang::load_locale(&self.config.language);
         }
 
         let mut changes = Vec::new();
+        if old.mic_name != self.config.mic_name {
+            changes.push(format!("mic={:?}→{:?}", old.mic_name, self.config.mic_name));
+        }
         if old.engine_mode != self.config.engine_mode {
             crate::stt::engine::set_engine_mode_server(self.config.engine_mode == "server");
             changes.push(format!("engine_mode={}→{}", old.engine_mode, self.config.engine_mode));

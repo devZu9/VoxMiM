@@ -4,6 +4,8 @@ use fenestra::{TextSize, TextAlign, Weight};
 use std::collections::HashMap;
 use std::ffi::c_void;
 
+mod mic;
+
 const EMBEDDED_RU: &str = include_str!("../../lang/ru.json");
 const EMBEDDED_EN: &str = include_str!("../../lang/en.json");
 
@@ -42,6 +44,9 @@ enum Msg {
     ToggleLog,
     ToggleTrail,
     SetLang(usize),
+    SelectMic(usize),
+    TestMic,
+    MicTestDone(Result<f32, String>),
     ToggleDark,
     ToggleKeepWav,
     ToggleShowConsole,
@@ -86,6 +91,9 @@ struct SettingsApp {
     whisper_timeout: String,
     whisper_bins: String,
     subtitle_format: String,
+    mic_devices: Vec<String>,
+    mic_idx: usize,
+    mic_status: String,
     locale: HashMap<String, String>,
     window_x: i32,
     window_y: i32,
@@ -104,6 +112,14 @@ impl SettingsApp {
             _ => EMBEDDED_EN,
         };
         serde_json::from_str(embedded).unwrap_or_default()
+    }
+
+    /// Имя выбранного микрофона (None — системный по умолчанию).
+    fn selected_mic_name(&self) -> Option<String> {
+        self.mic_idx
+            .checked_sub(1)
+            .and_then(|i| self.mic_devices.get(i))
+            .cloned()
     }
 }
 
@@ -399,6 +415,18 @@ fn get_config_mtime() -> u64 {
         .unwrap_or(0)
 }
 
+/// Индекс в выпадающем списке: 0 — «системный по умолчанию», далее устройства.
+fn mic_index_for(devices: &[String], selected: Option<&str>) -> usize {
+    match selected {
+        Some(name) => devices
+            .iter()
+            .position(|d| d == name)
+            .map(|i| i + 1)
+            .unwrap_or(0),
+        None => 0,
+    }
+}
+
 fn set_from_value(app: &mut SettingsApp, cfg: &serde_json::Value) {
     app.engine_server = cfg.get("engine_mode").and_then(|v| v.as_str()).map_or(false, |s| s == "server");
     app.det_server = cfg.get("detector_mode").and_then(|v| v.as_str()).map_or(false, |s| s == "server");
@@ -432,6 +460,9 @@ fn set_from_value(app: &mut SettingsApp, cfg: &serde_json::Value) {
     app.subtitle_format = cfg.get("subtitle_format").and_then(|v| v.as_str()).unwrap_or("srt").to_string();
     app.window_x = cfg.get("window_x").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
     app.window_y = cfg.get("window_y").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+    app.mic_devices = mic::list_inputs();
+    let mic_name = cfg.get("mic_name").and_then(|v| v.as_str());
+    app.mic_idx = mic_index_for(&app.mic_devices, mic_name);
     app.locale = SettingsApp::load_locale(if app.cur_lang == 1 { "en" } else { "ru" });
 
     let model_path = cfg.get("model_path").and_then(|v| v.as_str()).unwrap_or("");
@@ -499,6 +530,17 @@ fn save_from_ui(app: &SettingsApp, cfg: &mut serde_json::Value) {
     set(cfg, &["subtitle_format"], serde_json::json!(app.subtitle_format));
     set(cfg, &["window_x"], serde_json::json!(app.window_x));
     set(cfg, &["window_y"], serde_json::json!(app.window_y));
+    // Микрофон: 0 — системный по умолчанию (mic_name = null)
+    match app.selected_mic_name() {
+        Some(name) => {
+            set(cfg, &["mic_name"], serde_json::json!(name));
+            set(cfg, &["mic_index"], serde_json::json!(app.mic_idx - 1));
+        }
+        None => {
+            set(cfg, &["mic_name"], serde_json::Value::Null);
+            set(cfg, &["mic_index"], serde_json::Value::Null);
+        }
+    }
     if let Ok(n) = app.cmd_max_words.trim().parse::<u32>() {
         set(cfg, &["command_max_words"], serde_json::json!(n));
     }
@@ -622,6 +664,35 @@ impl App for SettingsApp {
                 self.apply();
             }
             Msg::ToggleDark => { self.dark_mode = !self.dark_mode; self.apply(); }
+            Msg::SelectMic(i) => {
+                self.mic_idx = i;
+                self.mic_status.clear();
+                self.apply();
+            }
+            Msg::TestMic => {
+                self.mic_status = self.t("settings.mic_testing").to_string();
+                let name = self.selected_mic_name();
+                let proxy = self.proxy.clone();
+                std::thread::Builder::new()
+                    .name("mic-test".into())
+                    .spawn(move || {
+                        let result = mic::test_input(name.as_deref(), 2000);
+                        if let Some(p) = proxy {
+                            p.send(Msg::MicTestDone(result));
+                        }
+                    })
+                    .ok();
+            }
+            Msg::MicTestDone(result) => {
+                let level_word = self.t("settings.mic_level").to_string();
+                let silent = self.t("settings.mic_silent").to_string();
+                let failed = self.t("settings.mic_test_error").to_string();
+                self.mic_status = match result {
+                    Ok(db) if db > -60.0 => format!("{level_word}: {db:.0} дБ"),
+                    Ok(_) => silent,
+                    Err(e) => format!("{failed}: {e}"),
+                };
+            }
             Msg::SetSubtitleFormat(f) => { self.subtitle_format = f; self.apply(); }
             Msg::ToggleKeepWav => { self.keep_wav = !self.keep_wav; self.apply(); }
             Msg::ToggleShowConsole => { self.show_console = !self.show_console; self.apply(); }
@@ -850,7 +921,21 @@ impl SettingsApp {
             icon_button(fenestra::text("▼")).size(ControlSize::Xs).variant(ButtonVariant::Ghost).on_click(Msg::VadThresholdDown).into(),
         ];
 
-        col().gap(SP2).p(SP3).children(vec![
+        // Микрофон: список устройств ввода + проверка уровня
+        let mut mic_opts: Vec<String> = vec![self.t("settings.mic_default").to_string()];
+        mic_opts.extend(self.mic_devices.iter().cloned());
+        let mic_refs: Vec<&str> = mic_opts.iter().map(|s| s.as_str()).collect();
+        let mic_row: Element<Msg> = row().gap(SP2).items_center().children([
+            text(self.t("settings.mic")),
+            select(self.mic_idx, mic_refs).width(300.0).on_change(Msg::SelectMic).into(),
+            button(self.t("settings.mic_test")).on_click(Msg::TestMic).into(),
+        ]);
+
+        let mut items: Vec<Element<Msg>> = vec![mic_row];
+        if !self.mic_status.is_empty() {
+            items.push(text(self.mic_status.clone()).into());
+        }
+        items.extend(vec![
             checkbox(self.wake_enable).label(self.t("settings.wake_enable")).on_toggle(Msg::ToggleWake).into(),
             checkbox(self.vad_enable).label(self.t("settings.vad_enable")).on_toggle(Msg::ToggleVad).into(),
             row().gap(SP2).items_center().children([
@@ -872,7 +957,9 @@ impl SettingsApp {
                 button(self.t("settings.browse")).on_click(Msg::BrowseWhisperBins).into(),
             ]),
             spacer(),
-        ])
+        ]);
+
+        col().gap(SP2).p(SP3).children(items)
     }
 
     fn tab_text(&self) -> Element<Msg> {
@@ -958,6 +1045,7 @@ fn main() {
         math_mode: false, noise_filter: true, warmup: true, show_result: false,
         log_enable: false, log_dir: String::new(), trailing_space: false,
         keep_wav: false, show_console: true, whisper_timeout: "120".into(), whisper_bins: String::new(), subtitle_format: "srt".into(), cur_lang: 0, locale: HashMap::new(),
+        mic_devices: Vec::new(), mic_idx: 0, mic_status: String::new(),
         window_x: 0, window_y: 0, proxy: None, last_config_mtime: 0,
     };
     fenestra::run(app, opts);
@@ -978,8 +1066,20 @@ mod tests {
             math_mode: false, noise_filter: true, warmup: true, show_result: false,
             log_enable: false, log_dir: String::new(), trailing_space: false,
             keep_wav: false, show_console: true, whisper_timeout: "120".into(), whisper_bins: String::new(), subtitle_format: "srt".into(), cur_lang: 0, locale: SettingsApp::load_locale("ru"),
+            mic_devices: Vec::new(), mic_idx: 0, mic_status: String::new(),
             window_x: 0, window_y: 0, proxy: None, last_config_mtime: 0,
         }
+    }
+
+    #[test]
+    fn test_mic_index_for() {
+        let devices = vec!["Микрофон (USB)".to_string(), "INPUT (Volt 1)".to_string()];
+        // 0 — системный по умолчанию
+        assert_eq!(mic_index_for(&devices, None), 0);
+        assert_eq!(mic_index_for(&devices, Some("INPUT (Volt 1)")), 2);
+        // Устройство пропало — откат на «системный по умолчанию»
+        assert_eq!(mic_index_for(&devices, Some("Нет такого")), 0);
+        assert_eq!(mic_index_for(&[], None), 0);
     }
 
     #[test]

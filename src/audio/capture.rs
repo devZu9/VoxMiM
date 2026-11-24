@@ -15,6 +15,13 @@ pub struct AudioCapture {
 #[cfg(target_os = "macos")]
 unsafe impl Send for AudioCapture {}
 
+/// Микрофон ли это. cpal 0.15 на Windows (WASAPI) перечисляет ВСЕ активные
+/// endpoint'ы — включая динамики и мониторы интерфейса (loopback), которые
+/// дают тишину. У устройства ввода есть входной формат, у воспроизведения — нет.
+fn is_input(device: &Device) -> bool {
+    device.default_input_config().is_ok()
+}
+
 impl AudioCapture {
     pub fn new() -> Self {
         Self {
@@ -25,17 +32,44 @@ impl AudioCapture {
         }
     }
 
+    /// Только устройства ввода. Индекс — позиция в этом списке.
     pub fn list_devices() -> Vec<(String, usize)> {
         let host = cpal::default_host();
         let mut devices = Vec::new();
         if let Ok(input_devices) = host.input_devices() {
-            for (i, device) in input_devices.enumerate() {
+            for device in input_devices {
+                if !is_input(&device) {
+                    continue;
+                }
                 if let Ok(name) = device.name() {
-                    devices.push((name, i));
+                    let idx = devices.len();
+                    devices.push((name, idx));
                 }
             }
         }
         devices
+    }
+
+    /// Имя системного микрофона по умолчанию (в настройках Windows).
+    pub fn default_device_name() -> Option<String> {
+        let host = cpal::default_host();
+        let device = host.default_input_device()?;
+        if !is_input(&device) {
+            return None;
+        }
+        device.name().ok()
+    }
+
+    /// Выбрать системный микрофон по умолчанию.
+    pub fn select_default(&mut self) -> Result<(), String> {
+        let host = cpal::default_host();
+        let device = host
+            .default_input_device()
+            .ok_or("Системный микрофон не найден")?;
+        if !is_input(&device) {
+            return Err("Системное устройство ввода не найдено".to_string());
+        }
+        self.apply_device(device)
     }
 
     pub fn select_device(&mut self, name: &str, index: usize) -> Result<(), String> {
@@ -43,30 +77,41 @@ impl AudioCapture {
         let devices: Vec<Device> = host
             .input_devices()
             .map_err(|e| format!("Нет устройств ввода: {e}"))?
+            .filter(is_input)
             .collect();
 
-        // Сначала ищем по имени
-        let device = devices.iter().find(|d| d.name().ok().as_deref() == Some(name))
+        // Сначала ищем по имени, затем по индексу; не нашли — системный по умолчанию
+        let device = devices
+            .iter()
+            .find(|d| d.name().ok().as_deref() == Some(name))
             .cloned()
-            .or_else(|| devices.get(index).cloned())
-            .ok_or_else(|| {
-                format!("Устройство '{name}' не найдено. Доступны: {}",
-                    devices.iter().filter_map(|d| d.name().ok()).collect::<Vec<_>>().join(", "))
-            })?;
+            .or_else(|| devices.get(index).cloned());
 
-        if let Ok(d_name) = device.name() {
-            if d_name != name {
-                log::warn!("Микрофон по индексу {index}: '{d_name}' (ожидался '{name}')");
+        let device = match device {
+            Some(d) => d,
+            None => {
+                log::warn!("Микрофон '{name}' не найден — беру системный по умолчанию");
+                return self.select_default();
             }
-        }
+        };
 
+        self.apply_device(device)
+    }
+
+    fn apply_device(&mut self, device: Device) -> Result<(), String> {
+        let name = device.name().unwrap_or_default();
         if let Ok(config) = device.default_input_config() {
             self.sample_rate = config.sample_rate().0;
         }
         self.device = Some(device);
-        self.selected_name = Some(name.to_string());
+        self.selected_name = Some(name.clone());
         log::info!("Микрофон: {name} ({} Гц)", self.sample_rate);
         Ok(())
+    }
+
+    /// Остановить захват — поток закрывается вместе со `stream`.
+    pub fn stop(&mut self) {
+        self.stream = None;
     }
 
     /// Запуск захвата — шлёт чанки аудио в mpsc-канал.
