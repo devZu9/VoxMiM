@@ -83,6 +83,9 @@ impl App {
         // Локализация — до трея, чтобы меню читало правильные строки
         lang::load_locale(&config.language);
 
+        // Способ вставки текста: auto / clipboard / typing
+        crate::input::inserter::set_insert_mode(&config.insert_mode);
+
         // Трей
         let recording = Arc::new(AtomicBool::new(false));
         let ready = Arc::new(AtomicBool::new(false));
@@ -855,19 +858,20 @@ impl App {
     }
 
     fn on_transcribe_file(&self, path: &str) {
-        let p = std::path::Path::new(path);
+        let p = std::path::PathBuf::from(path);
         if !p.exists() {
             log::error!("TranscribeFile: файл не найден — {path}");
+            self.notify_transcribe_error();
             return;
         }
         log::info!("TranscribeFile: распознаю {path}");
         let model = self.config.model_path.clone();
         if !model.exists() {
             log::error!("TranscribeFile: модель не найдена — {}", model.display());
+            self.notify_transcribe_error();
             return;
         }
         let lang = self.config.language.clone();
-        let p = p.to_path_buf();
         let text = std::thread::scope(|s| {
             s.spawn(|| {
                 crate::stt::engine::transcribe_audio_file(&p, &model, &lang)
@@ -876,11 +880,71 @@ impl App {
         match text {
             Some(t) => {
                 let fixed = crate::text::fix_text(&t, &self.config.text_fix, &self.user_dict);
-                log::info!("TranscribeFile: ✅ «{fixed}»");
-                let _ = self.insert_tx.send(fixed);
+                self.save_transcribed(&p, &fixed);
             }
-            None => log::error!("TranscribeFile: ❌ ошибка"),
+            None => {
+                log::error!("TranscribeFile: ❌ ошибка");
+                self.notify_transcribe_error();
+            }
         }
+    }
+
+    /// Результат распознавания файла: в буфер обмена и в .txt рядом с исходником.
+    /// В активное окно НЕ вставляем — пользователь сам решает, куда и когда вставить.
+    fn save_transcribed(&self, source: &std::path::Path, text: &str) {
+        use crate::lang::t;
+        let title = t("notify.transcribe.title");
+        let trimmed = text.trim();
+        if trimmed.is_empty() {
+            log::info!("TranscribeFile: речь не распознана");
+            crate::ui::tray::notify(&title, &t("notify.transcribe.empty"));
+            return;
+        }
+
+        let txt_path = text_output_path(source);
+        let file_name = txt_path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let chars = trimmed.chars().count();
+        let saved = match std::fs::write(&txt_path, trimmed) {
+            Ok(()) => {
+                log::info!("TranscribeFile: ✅ текст сохранён — {}", txt_path.display());
+                true
+            }
+            Err(e) => {
+                log::error!("TranscribeFile: не удалось сохранить {}: {e}", txt_path.display());
+                false
+            }
+        };
+
+        let copied = match crate::input::inserter::TextInserter::set_clipboard_text(trimmed) {
+            Ok(()) => true,
+            Err(e) => {
+                log::error!("TranscribeFile: буфер обмена: {e}");
+                false
+            }
+        };
+
+        let body = match (copied, saved) {
+            (true, true) => format!(
+                "{}\n{}: {chars} · {}: {file_name}",
+                t("notify.transcribe.copied"),
+                t("notify.transcribe.chars"),
+                t("notify.transcribe.saved")
+            ),
+            (true, false) => format!("{}\n{}: {chars}", t("notify.transcribe.copied"), t("notify.transcribe.chars")),
+            _ => t("notify.transcribe.buffer_failed"),
+        };
+        log::info!("TranscribeFile: «{trimmed}»");
+        crate::ui::tray::notify(&title, &body);
+    }
+
+    fn notify_transcribe_error(&self) {
+        crate::ui::tray::notify(
+            &crate::lang::t("notify.transcribe.title"),
+            &crate::lang::t("notify.transcribe.error"),
+        );
     }
 
     fn on_subtitle_file(&self, path: &str) {
@@ -899,11 +963,23 @@ impl App {
         let fmt = self.config.subtitle_format.clone();
         let p = p.to_path_buf();
         let model = model.to_path_buf();
-        std::thread::scope(|s| {
+        let done = std::thread::scope(|s| {
             s.spawn(|| {
                 crate::stt::engine::subtitle_audio_file(&p, &model, &lang, &fmt)
             }).join().ok()
         });
+        let title = crate::lang::t("notify.subtitle.title");
+        match done {
+            Some(Ok(())) => {
+                let file = p.with_extension(if fmt == "vtt" { "vtt" } else { "srt" });
+                let name = file.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+                crate::ui::tray::notify(
+                    &title,
+                    &format!("{}: {name}", crate::lang::t("notify.subtitle.saved")),
+                );
+            }
+            _ => crate::ui::tray::notify(&title, &crate::lang::t("notify.subtitle.error")),
+        }
     }
 
     /// Сменить микрофон на лету: остановить поток и открыть выбранный заново.
@@ -1029,6 +1105,10 @@ impl App {
         if old.noise_filter_enabled != self.config.noise_filter_enabled {
             changes.push(format!("noise_filter={}→{}", old.noise_filter_enabled, self.config.noise_filter_enabled));
         }
+        if old.insert_mode != self.config.insert_mode {
+            crate::input::inserter::set_insert_mode(&self.config.insert_mode);
+            changes.push(format!("insert_mode={}→{}", old.insert_mode, self.config.insert_mode));
+        }
         if old.warmup_on_start != self.config.warmup_on_start {
             changes.push(format!("warmup={}→{}", old.warmup_on_start, self.config.warmup_on_start));
         }
@@ -1141,9 +1221,26 @@ fn show_model_error(model: &str) {
     }
 }
 
+/// Куда сохраняется распознанный текст: рядом с исходником, с расширением .txt.
+fn text_output_path(source: &std::path::Path) -> std::path::PathBuf {
+    source.with_extension("txt")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_text_output_path() {
+        assert_eq!(
+            text_output_path(std::path::Path::new("C:\\audio\\запись.mp3")),
+            std::path::PathBuf::from("C:\\audio\\запись.txt")
+        );
+        assert_eq!(
+            text_output_path(std::path::Path::new("/tmp/voice.ogg")),
+            std::path::PathBuf::from("/tmp/voice.txt")
+        );
+    }
 
     /// App для тестов: server-режим (без скачивания бинарников),
     /// без wake-режима, модели не существуют — распознавание не запускается.

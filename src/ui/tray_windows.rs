@@ -119,7 +119,9 @@ struct NOTIFYICONDATAW {
 const NIF_MESSAGE: u32 = 0x00000001;
 const NIF_ICON: u32 = 0x00000002;
 const NIF_TIP: u32 = 0x00000004;
+const NIF_INFO: u32 = 0x00000010;
 const NIF_GUID: u32 = 0x00000020;
+const NIIF_INFO: u32 = 0x00000001;
 const NIM_ADD: u32 = 0x00000000;
 const NIM_DELETE: u32 = 0x00000002;
 const MF_STRING: u32 = 0x00000000;
@@ -145,6 +147,31 @@ static TRAY_HAS_READY: AtomicBool = AtomicBool::new(false);
 pub static TRAY_RECOVERING: AtomicBool = AtomicBool::new(false);
 
 pub fn set_recovering(v: bool) { TRAY_RECOVERING.store(v, Ordering::SeqCst); }
+
+/// Всплывающее уведомление у иконки трея (в Win10/11 — тост в центре уведомлений).
+pub fn notify(title: &str, text: &str) {
+    let hwnd = TRAY_HWND.load(Ordering::SeqCst) as *mut std::ffi::c_void;
+    if hwnd.is_null() {
+        log::info!("Уведомление [{title}]: {text}");
+        return;
+    }
+    unsafe {
+        let mut nid: NOTIFYICONDATAW = std::mem::zeroed();
+        nid.cbSize = std::mem::size_of::<NOTIFYICONDATAW>() as u32;
+        nid.hWnd = hwnd;
+        nid.uID = 1;
+        nid.uFlags = NIF_INFO;
+        nid.guidItem = TRAY_GUID.lock().unwrap().unwrap_or([0; 16]);
+        nid.dwInfoFlags = NIIF_INFO;
+        for (i, c) in title.encode_utf16().take(63).enumerate() {
+            nid.szInfoTitle[i] = c;
+        }
+        for (i, c) in text.encode_utf16().take(255).enumerate() {
+            nid.szInfo[i] = c;
+        }
+        Shell_NotifyIconW(NIM_MODIFY, &nid);
+    }
+}
 
 pub struct TrayManager;
 

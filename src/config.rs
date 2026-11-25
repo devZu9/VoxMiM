@@ -97,7 +97,12 @@ pub struct Config {
     pub whisper_timeout_secs: u64,
     #[serde(default = "default_subtitle_format")]
     pub subtitle_format: String,
+    /// Способ вставки текста: "auto" (буфер, если в нём текст; иначе набор), "clipboard", "typing"
+    #[serde(default = "default_insert_mode")]
+    pub insert_mode: String,
 }
+
+fn default_insert_mode() -> String { "auto".to_string() }
 
 fn default_subtitle_format() -> String { "srt".to_string() }
 
@@ -255,6 +260,7 @@ impl Default for Config {
             cur_tab: 0,
             whisper_timeout_secs: 10,
             subtitle_format: default_subtitle_format(),
+            insert_mode: default_insert_mode(),
         }
     }
 }

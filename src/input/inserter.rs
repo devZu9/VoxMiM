@@ -21,6 +21,7 @@ mod win32 {
         fn SendInput(cInputs: u32, pInputs: *const INPUT, cbSize: i32) -> u32;
         fn SendMessageW(hwnd: isize, msg: u32, wparam: isize, lparam: isize) -> isize;
         fn GetGUIThreadInfo(idThread: u32, lpgui: *mut GUITHREADINFO) -> i32;
+        fn IsClipboardFormatAvailable(format: u32) -> i32;
     }
 
     const WM_GETTEXT: u32 = 0x000D;
@@ -90,10 +91,106 @@ mod win32 {
     }
 
     const CF_UNICODETEXT: u32 = 13;
+    const CF_BITMAP: u32 = 2;
+    const CF_DIB: u32 = 8;
+    const CF_HDROP: u32 = 15;
+    const CF_DIBV5: u32 = 17;
     const GMEM_MOVEABLE: u32 = 0x0002;
     const VK_CONTROL: u16 = 0x11;
     const VK_V: u16 = 0x56;
+    const VK_RETURN: u16 = 0x0D;
+    const VK_SHIFT: u16 = 0x10;
     const INPUT_KEYBOARD: u32 = 1;
+    const KEYEVENTF_KEYUP: u32 = 0x0002;
+    const KEYEVENTF_UNICODE: u32 = 0x0004;
+
+    /// В буфере лежит текст (а не картинка/файлы). Только тогда его можно
+    /// перезаписать на время вставки и вернуть обратно без потерь.
+    pub fn clipboard_is_text() -> bool {
+        unsafe {
+            if IsClipboardFormatAvailable(CF_UNICODETEXT) == 0 {
+                return false;
+            }
+            if IsClipboardFormatAvailable(CF_DIB) != 0
+                || IsClipboardFormatAvailable(CF_DIBV5) != 0
+                || IsClipboardFormatAvailable(CF_BITMAP) != 0
+                || IsClipboardFormatAvailable(CF_HDROP) != 0
+            {
+                return false;
+            }
+            true
+        }
+    }
+
+    fn key_input(vk: u16, up: bool) -> INPUT {
+        let ki = KEYBDINPUT {
+            wVk: vk,
+            wScan: 0,
+            dwFlags: if up { KEYEVENTF_KEYUP } else { 0 },
+            time: 0,
+            dwExtraInfo: 0,
+        };
+        INPUT {
+            type_: INPUT_KEYBOARD,
+            u: INPUT_UNION {
+                ki: ManuallyDrop::new(ki),
+            },
+        }
+    }
+
+    fn unicode_input(unit: u16, up: bool) -> INPUT {
+        let mut flags = KEYEVENTF_UNICODE;
+        if up {
+            flags |= KEYEVENTF_KEYUP;
+        }
+        let ki = KEYBDINPUT {
+            wVk: 0,
+            wScan: unit,
+            dwFlags: flags,
+            time: 0,
+            dwExtraInfo: 0,
+        };
+        INPUT {
+            type_: INPUT_KEYBOARD,
+            u: INPUT_UNION {
+                ki: ManuallyDrop::new(ki),
+            },
+        }
+    }
+
+    /// Набрать текст как клавиатуру, не трогая буфер обмена.
+    /// Перевод строки — Shift+Enter: в чатах это перенос, а не отправка.
+    pub fn send_unicode_text(text: &str) {
+        let mut events: Vec<INPUT> = Vec::with_capacity(text.chars().count() * 2);
+        for ch in text.chars() {
+            match ch {
+                '\r' => {}
+                '\n' => {
+                    events.push(key_input(VK_SHIFT, false));
+                    events.push(key_input(VK_RETURN, false));
+                    events.push(key_input(VK_RETURN, true));
+                    events.push(key_input(VK_SHIFT, true));
+                }
+                _ => {
+                    let mut buf = [0u16; 2];
+                    for unit in ch.encode_utf16(&mut buf) {
+                        events.push(unicode_input(*unit, false));
+                        events.push(unicode_input(*unit, true));
+                    }
+                }
+            }
+        }
+        for chunk in events.chunks(64) {
+            unsafe {
+                SendInput(
+                    chunk.len() as u32,
+                    chunk.as_ptr(),
+                    std::mem::size_of::<INPUT>() as i32,
+                );
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+    }
 
     pub fn copy_to_clipboard(text: &str) -> Result<(), String> {
         let wide: Vec<u16> = text.encode_utf16().collect();
@@ -319,6 +416,31 @@ mod win32 {
     }
 }
 
+/// Режим вставки: "auto" (по умолчанию), "clipboard" или "typing".
+static INSERT_MODE: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+pub fn set_insert_mode(mode: &str) {
+    *INSERT_MODE.lock().unwrap() = Some(mode.to_string());
+}
+
+fn current_insert_mode() -> String {
+    INSERT_MODE
+        .lock()
+        .ok()
+        .and_then(|m| m.clone())
+        .unwrap_or_else(|| "auto".to_string())
+}
+
+/// Нужно ли вставлять через буфер обмена.
+/// `auto` — буфер только если в нём текст; иначе набор (скриншот остаётся цел).
+pub fn use_clipboard(mode: &str, clipboard_is_text: bool) -> bool {
+    match mode {
+        "typing" => false,
+        "clipboard" => true,
+        _ => clipboard_is_text,
+    }
+}
+
 pub struct TextInserter;
 
 impl TextInserter {
@@ -326,7 +448,80 @@ impl TextInserter {
         Self
     }
 
+    /// Положить текст в буфер обмена, ничего не вставляя в активное окно.
+    pub fn set_clipboard_text(text: &str) -> Result<(), String> {
+        #[cfg(target_os = "windows")]
+        {
+            win32::copy_to_clipboard(text)
+        }
+
+        #[cfg(target_os = "macos")]
+        {
+            use std::io::Write;
+            let mut child = std::process::Command::new("pbcopy")
+                .stdin(std::process::Stdio::piped())
+                .spawn()
+                .map_err(|e| format!("pbcopy: {e}"))?;
+            child
+                .stdin
+                .take()
+                .ok_or("pbcopy: нет stdin")?
+                .write_all(text.as_bytes())
+                .map_err(|e| format!("pbcopy: {e}"))?;
+            let _ = child.wait();
+            Ok(())
+        }
+
+        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+        {
+            let _ = text;
+            Err("буфер обмена не поддержан".to_string())
+        }
+    }
+
     pub fn insert_text(&self, text: &str) {
+        #[cfg(target_os = "windows")]
+        {
+            let mode = current_insert_mode();
+            if use_clipboard(&mode, win32::clipboard_is_text()) {
+                self.insert_via_clipboard(text);
+            } else {
+                log::info!("Вставка без буфера обмена (режим {mode})");
+                self.insert_via_typing(text);
+            }
+        }
+
+        #[cfg(target_os = "macos")]
+        {
+            // На macOS пока только буфер обмена
+            self.insert_via_clipboard(text);
+        }
+
+        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+        {
+            let _ = text;
+        }
+    }
+
+    /// Набрать текст клавиатурой — буфер обмена не трогается.
+    #[cfg(target_os = "windows")]
+    fn insert_via_typing(&self, text: &str) {
+        let hwnd = get_foreground_hwnd();
+        if hwnd == 0 {
+            log::warn!("Не удалось получить HWND активного окна");
+            return;
+        }
+        win32::ensure_foreground(hwnd);
+        let final_text = if win32::needs_prepend_space() {
+            format!(" {text}")
+        } else {
+            text.to_string()
+        };
+        win32::send_unicode_text(&final_text);
+        log::info!("Набрано без буфера обмена: {} символов", final_text.chars().count());
+    }
+
+    fn insert_via_clipboard(&self, text: &str) {
         #[cfg(target_os = "windows")]
         {
             let saved = win32::save_clipboard();
@@ -433,5 +628,23 @@ fn get_foreground_hwnd() -> isize {
             fn GetForegroundWindow() -> isize;
         }
         GetForegroundWindow()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_use_clipboard_by_mode() {
+        // Авто: буфер только для текста в буфере
+        assert!(use_clipboard("auto", true));
+        assert!(!use_clipboard("auto", false));
+        // Явные режимы не зависят от содержимого буфера
+        assert!(use_clipboard("clipboard", false));
+        assert!(!use_clipboard("typing", true));
+        // Неизвестное значение ведёт себя как авто
+        assert!(use_clipboard("", true));
+        assert!(!use_clipboard("", false));
     }
 }

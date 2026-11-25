@@ -44,6 +44,7 @@ enum Msg {
     ToggleLog,
     ToggleTrail,
     SetLang(usize),
+    SetInsertMode(usize),
     SelectMic(usize),
     TestMic,
     MicTestDone(Result<f32, String>),
@@ -91,6 +92,7 @@ struct SettingsApp {
     whisper_timeout: String,
     whisper_bins: String,
     subtitle_format: String,
+    insert_mode: String,
     mic_devices: Vec<String>,
     mic_idx: usize,
     mic_status: String,
@@ -458,6 +460,7 @@ fn set_from_value(app: &mut SettingsApp, cfg: &serde_json::Value) {
     app.whisper_bins = cfg.get("whisper_bins_path").and_then(|v| v.as_str()).unwrap_or_default().to_string();
     app.cur_tab = cfg.get("cur_tab").and_then(|v| v.as_i64()).unwrap_or(0) as usize;
     app.subtitle_format = cfg.get("subtitle_format").and_then(|v| v.as_str()).unwrap_or("srt").to_string();
+    app.insert_mode = cfg.get("insert_mode").and_then(|v| v.as_str()).unwrap_or("auto").to_string();
     app.window_x = cfg.get("window_x").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
     app.window_y = cfg.get("window_y").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
     app.mic_devices = mic::list_inputs();
@@ -528,6 +531,7 @@ fn save_from_ui(app: &SettingsApp, cfg: &mut serde_json::Value) {
     set(cfg, &["language"], serde_json::json!(if app.cur_lang == 1 { "en" } else { "ru" }));
     set(cfg, &["cur_tab"], serde_json::json!(app.cur_tab));
     set(cfg, &["subtitle_format"], serde_json::json!(app.subtitle_format));
+    set(cfg, &["insert_mode"], serde_json::json!(app.insert_mode));
     set(cfg, &["window_x"], serde_json::json!(app.window_x));
     set(cfg, &["window_y"], serde_json::json!(app.window_y));
     // Микрофон: 0 — системный по умолчанию (mic_name = null)
@@ -661,6 +665,14 @@ impl App for SettingsApp {
             Msg::SetLang(i) => {
                 self.cur_lang = i;
                 self.locale = SettingsApp::load_locale(if i == 1 { "en" } else { "ru" });
+                self.apply();
+            }
+            Msg::SetInsertMode(i) => {
+                self.insert_mode = match i {
+                    1 => "clipboard".to_string(),
+                    2 => "typing".to_string(),
+                    _ => "auto".to_string(),
+                };
                 self.apply();
             }
             Msg::ToggleDark => { self.dark_mode = !self.dark_mode; self.apply(); }
@@ -935,6 +947,24 @@ impl SettingsApp {
         if !self.mic_status.is_empty() {
             items.push(text(self.mic_status.clone()).into());
         }
+
+        // Способ вставки текста: авто (буфер только для текста), буфер, набор
+        let insert_idx = match self.insert_mode.as_str() {
+            "clipboard" => 1,
+            "typing" => 2,
+            _ => 0,
+        };
+        let ia = self.t("settings.insert_auto");
+        let ic = self.t("settings.insert_clipboard");
+        let it = self.t("settings.insert_typing");
+        items.push(
+            row().gap(SP2).items_center().children([
+                text(self.t("settings.insert_mode")),
+                radio_group(insert_idx, [ia, ic, it], |i| Msg::SetInsertMode(i)).into(),
+            ]).into(),
+        );
+        items.push(text(self.t("settings.insert_hint")).into());
+
         items.extend(vec![
             checkbox(self.wake_enable).label(self.t("settings.wake_enable")).on_toggle(Msg::ToggleWake).into(),
             checkbox(self.vad_enable).label(self.t("settings.vad_enable")).on_toggle(Msg::ToggleVad).into(),
@@ -1044,7 +1074,7 @@ fn main() {
         fix_repetitions: true, fix_punctuation: true, cmd_max_words: "3".into(),
         math_mode: false, noise_filter: true, warmup: true, show_result: false,
         log_enable: false, log_dir: String::new(), trailing_space: false,
-        keep_wav: false, show_console: true, whisper_timeout: "120".into(), whisper_bins: String::new(), subtitle_format: "srt".into(), cur_lang: 0, locale: HashMap::new(),
+        keep_wav: false, show_console: true, whisper_timeout: "120".into(), whisper_bins: String::new(), subtitle_format: "srt".into(), insert_mode: "auto".into(), cur_lang: 0, locale: HashMap::new(),
         mic_devices: Vec::new(), mic_idx: 0, mic_status: String::new(),
         window_x: 0, window_y: 0, proxy: None, last_config_mtime: 0,
     };
@@ -1065,7 +1095,7 @@ mod tests {
             fix_repetitions: true, fix_punctuation: true, cmd_max_words: "3".into(),
             math_mode: false, noise_filter: true, warmup: true, show_result: false,
             log_enable: false, log_dir: String::new(), trailing_space: false,
-            keep_wav: false, show_console: true, whisper_timeout: "120".into(), whisper_bins: String::new(), subtitle_format: "srt".into(), cur_lang: 0, locale: SettingsApp::load_locale("ru"),
+            keep_wav: false, show_console: true, whisper_timeout: "120".into(), whisper_bins: String::new(), subtitle_format: "srt".into(), insert_mode: "auto".into(), cur_lang: 0, locale: SettingsApp::load_locale("ru"),
             mic_devices: Vec::new(), mic_idx: 0, mic_status: String::new(),
             window_x: 0, window_y: 0, proxy: None, last_config_mtime: 0,
         }
@@ -1260,6 +1290,20 @@ mod tests {
         assert!(app.dark_mode);
         assert_eq!(app.cur_tab, 2);
         assert!(app.keep_wav);
+    }
+
+    #[test]
+    fn test_insert_mode_roundtrip() {
+        let mut app = test_app();
+        app.update(Msg::SetInsertMode(2));
+        assert_eq!(app.insert_mode, "typing");
+        let mut cfg = serde_json::json!({});
+        save_from_ui(&app, &mut cfg);
+        assert_eq!(cfg["insert_mode"], "typing");
+        app.update(Msg::SetInsertMode(1));
+        assert_eq!(app.insert_mode, "clipboard");
+        app.update(Msg::SetInsertMode(0));
+        assert_eq!(app.insert_mode, "auto");
     }
 
     #[test]

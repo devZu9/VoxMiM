@@ -18,6 +18,11 @@ pub fn set_recovering(v: bool) {
     TRAY_RECOVERING.store(v, Ordering::SeqCst);
 }
 
+/// Уведомление пользователю (на macOS — пока только в лог).
+pub fn notify(title: &str, text: &str) {
+    log::info!("Уведомление [{title}]: {text}");
+}
+
 struct TrayState {
     cmd_tx: crossbeam_channel::Sender<AppCommand>,
     recording: Arc<AtomicBool>,
