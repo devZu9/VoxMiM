@@ -440,6 +440,7 @@ unsafe extern "system" fn wnd_proc(
                     CMD_EDIT_HALL => { let _ = tx.send(AppCommand::EditHallDict); }
                     CMD_TRANSCRIBE_FILE => { self::on_transcribe_file(tx.clone()); }
                     CMD_SUBTITLE_FILE => { self::on_subtitle_file(tx.clone()); }
+                    CMD_CLEAR_CLIPBOARD => { self::on_clear_clipboard(); }
                     CMD_QUIT => { let _ = tx.send(AppCommand::Quit); }
                     _ => {}
                 }
@@ -469,6 +470,21 @@ fn on_subtitle_file(tx: Sender<AppCommand>) {
     let path = crate::ui::dialog::pick_audio_file();
     if let Some(p) = path {
         let _ = tx.send(AppCommand::SubtitleFile(p));
+    }
+}
+
+/// Пункт трея: очистить буфер обмена (убрать скриншот/файлы).
+fn on_clear_clipboard() {
+    let title = crate::lang::t("notify.clipboard.title");
+    match crate::input::inserter::TextInserter::clear_clipboard() {
+        Ok(()) => {
+            log::info!("Буфер обмена очищен из трея");
+            crate::ui::tray::notify(&title, &crate::lang::t("notify.clipboard.cleared"));
+        }
+        Err(e) => {
+            log::error!("Очистка буфера обмена: {e}");
+            crate::ui::tray::notify(&title, &format!("{}: {e}", crate::lang::t("notify.clipboard.error")));
+        }
     }
 }
 

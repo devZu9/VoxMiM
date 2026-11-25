@@ -14,6 +14,7 @@ pub const CMD_ADD_HALL: u32 = 1008;
 pub const CMD_EDIT_HALL: u32 = 1009;
 pub const CMD_TRANSCRIBE_FILE: u32 = 1010;
 pub const CMD_SUBTITLE_FILE: u32 = 1011;
+pub const CMD_CLEAR_CLIPBOARD: u32 = 1012;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum MenuKind {
@@ -59,6 +60,7 @@ pub fn menu_items(state: &TrayMenuState) -> Vec<TrayMenuItem> {
         TrayMenuItem { kind: MenuKind::Separator, id: 0, label_key: "" },
         TrayMenuItem { kind: MenuKind::Item, id: CMD_TRANSCRIBE_FILE, label_key: "tray.menu.transcribe_file" },
         TrayMenuItem { kind: MenuKind::Item, id: CMD_SUBTITLE_FILE, label_key: "tray.menu.subtitle_file" },
+        TrayMenuItem { kind: MenuKind::Item, id: CMD_CLEAR_CLIPBOARD, label_key: "tray.menu.clear_clipboard" },
         TrayMenuItem { kind: MenuKind::Separator, id: 0, label_key: "" },
         TrayMenuItem { kind: MenuKind::Checked(state.wake_on), id: CMD_WAKE, label_key: "tray.menu.voice_activation" },
         TrayMenuItem { kind: MenuKind::Checked(state.vad_on), id: CMD_AUTOSTOP, label_key: "tray.menu.auto_stop" },
@@ -77,9 +79,9 @@ mod tests {
     }
 
     #[test]
-    fn test_menu_20_items_exact_order() {
+    fn test_menu_21_items_exact_order() {
         let items = menu_items(&state());
-        assert_eq!(items.len(), 20);
+        assert_eq!(items.len(), 21);
 
         // Порядок пунктов и id — эталон, сверка с треем
         let ids: Vec<u32> = items.iter().map(|i| i.id).collect();
@@ -98,6 +100,7 @@ mod tests {
             0,            // разделитель
             CMD_TRANSCRIBE_FILE,
             CMD_SUBTITLE_FILE,
+            CMD_CLEAR_CLIPBOARD,
             0,            // разделитель
             CMD_WAKE,
             CMD_AUTOSTOP,
@@ -126,26 +129,26 @@ mod tests {
     fn test_vad_checked_when_enabled() {
         let on = menu_items(&TrayMenuState { vad_on: true, ..state() });
         let off = menu_items(&state());
-        assert_eq!(on[16].kind, MenuKind::Checked(true));
-        assert_eq!(off[16].kind, MenuKind::Checked(false));
-        assert_eq!(on[16].id, CMD_AUTOSTOP);
+        assert_eq!(on[17].kind, MenuKind::Checked(true));
+        assert_eq!(off[17].kind, MenuKind::Checked(false));
+        assert_eq!(on[17].id, CMD_AUTOSTOP);
     }
 
     #[test]
     fn test_wake_checked_when_enabled() {
         let on = menu_items(&TrayMenuState { wake_on: true, ..state() });
         let off = menu_items(&state());
-        assert_eq!(on[15].kind, MenuKind::Checked(true));
-        assert_eq!(off[15].kind, MenuKind::Checked(false));
-        assert_eq!(on[15].id, CMD_WAKE);
+        assert_eq!(on[16].kind, MenuKind::Checked(true));
+        assert_eq!(off[16].kind, MenuKind::Checked(false));
+        assert_eq!(on[16].id, CMD_WAKE);
     }
 
     #[test]
     fn test_quit_is_last() {
         let items = menu_items(&state());
-        assert_eq!(items[19].kind, MenuKind::Item);
-        assert_eq!(items[19].id, CMD_QUIT);
-        assert_eq!(items[19].label_key, "tray.menu.quit");
+        assert_eq!(items[20].kind, MenuKind::Item);
+        assert_eq!(items[20].id, CMD_QUIT);
+        assert_eq!(items[20].label_key, "tray.menu.quit");
     }
 
     #[test]

@@ -104,21 +104,15 @@ mod win32 {
     const KEYEVENTF_KEYUP: u32 = 0x0002;
     const KEYEVENTF_UNICODE: u32 = 0x0004;
 
-    /// В буфере лежит текст (а не картинка/файлы). Только тогда его можно
-    /// перезаписать на время вставки и вернуть обратно без потерь.
-    pub fn clipboard_is_text() -> bool {
+    /// Можно ли перезаписать буфер обмена на время вставки без потерь.
+    /// Нельзя, если в нём картинка или файлы — их сохранить/вернуть нечем.
+    /// Пустой буфер безопасен: после вставки его очистим обратно.
+    pub fn clipboard_can_paste() -> bool {
         unsafe {
-            if IsClipboardFormatAvailable(CF_UNICODETEXT) == 0 {
-                return false;
-            }
-            if IsClipboardFormatAvailable(CF_DIB) != 0
+            !(IsClipboardFormatAvailable(CF_DIB) != 0
                 || IsClipboardFormatAvailable(CF_DIBV5) != 0
                 || IsClipboardFormatAvailable(CF_BITMAP) != 0
-                || IsClipboardFormatAvailable(CF_HDROP) != 0
-            {
-                return false;
-            }
-            true
+                || IsClipboardFormatAvailable(CF_HDROP) != 0)
         }
     }
 
@@ -226,6 +220,22 @@ mod win32 {
         Ok(())
     }
 
+    /// Очистить буфер обмена. OpenClipboard может быть занят другим
+    /// приложением — пробуем несколько раз.
+    pub fn clear_clipboard() -> Result<(), String> {
+        for _ in 0..3 {
+            unsafe {
+                if OpenClipboard(0) != 0 {
+                    EmptyClipboard();
+                    CloseClipboard();
+                    return Ok(());
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(30));
+        }
+        Err("буфер обмена занят другим приложением".to_string())
+    }
+
     fn send_key_down(vk: u16) {
         let ki = KEYBDINPUT {
             wVk: vk,
@@ -307,9 +317,12 @@ mod win32 {
         }
     }
 
-    /// Восстанавливает сохранённый буфер обмена
+    /// Восстанавливает сохранённый буфер обмена.
+    /// Пустой снимок означает «буфера не было» — возвращаем его в пустое состояние,
+    /// иначе после вставки там остался бы наш текст.
     pub fn restore_clipboard(data: &[u16]) {
         if data.is_empty() {
+            let _ = clear_clipboard();
             return;
         }
         let bytes = (data.len() + 1) * 2;
@@ -432,12 +445,13 @@ fn current_insert_mode() -> String {
 }
 
 /// Нужно ли вставлять через буфер обмена.
-/// `auto` — буфер только если в нём текст; иначе набор (скриншот остаётся цел).
-pub fn use_clipboard(mode: &str, clipboard_is_text: bool) -> bool {
+/// `auto` — буфер, если в нём нет картинки/файлов (пустой тоже годится);
+/// иначе набор, чтобы не потерять скриншот.
+pub fn use_clipboard(mode: &str, clipboard_can_paste: bool) -> bool {
     match mode {
         "typing" => false,
         "clipboard" => true,
-        _ => clipboard_is_text,
+        _ => clipboard_can_paste,
     }
 }
 
@@ -449,8 +463,7 @@ impl TextInserter {
     }
 
     /// Положить текст в буфер обмена, ничего не вставляя в активное окно.
-    pub fn set_clipboard_text(text: &str) -> Result<(), String> {
-        #[cfg(target_os = "windows")]
+    pub fn set_clipboard_text(text: &str) -> Result<(), String> {        #[cfg(target_os = "windows")]
         {
             win32::copy_to_clipboard(text)
         }
@@ -479,11 +492,34 @@ impl TextInserter {
         }
     }
 
+    /// Очистить буфер обмена (например, убрать скриншот).
+    pub fn clear_clipboard() -> Result<(), String> {
+        #[cfg(target_os = "windows")]
+        {
+            win32::clear_clipboard()
+        }
+
+        #[cfg(target_os = "macos")]
+        {
+            let mut child = std::process::Command::new("pbcopy")
+                .stdin(std::process::Stdio::null())
+                .spawn()
+                .map_err(|e| format!("pbcopy: {e}"))?;
+            let _ = child.wait();
+            Ok(())
+        }
+
+        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+        {
+            Err("буфер обмена не поддержан".to_string())
+        }
+    }
+
     pub fn insert_text(&self, text: &str) {
         #[cfg(target_os = "windows")]
         {
             let mode = current_insert_mode();
-            if use_clipboard(&mode, win32::clipboard_is_text()) {
+            if use_clipboard(&mode, win32::clipboard_can_paste()) {
                 self.insert_via_clipboard(text);
             } else {
                 log::info!("Вставка без буфера обмена (режим {mode})");
@@ -601,16 +637,17 @@ impl TextInserter {
 
             std::thread::sleep(std::time::Duration::from_millis(100));
 
-            if let Some(prev) = saved {
-                if !prev.is_empty() {
-                    if let Ok(mut child) = Command::new("pbcopy")
-                        .stdin(std::process::Stdio::piped())
-                        .spawn()
-                    {
-                        let _ = child.stdin.take().unwrap().write_all(prev.as_bytes());
-                        let _ = child.wait();
-                    }
+            if let Some(prev) = saved.filter(|p| !p.is_empty()) {
+                if let Ok(mut child) = Command::new("pbcopy")
+                    .stdin(std::process::Stdio::piped())
+                    .spawn()
+                {
+                    let _ = child.stdin.take().unwrap().write_all(prev.as_bytes());
+                    let _ = child.wait();
                 }
+            } else {
+                // Буфера не было — возвращаем пустое состояние
+                let _ = TextInserter::clear_clipboard();
             }
         }
 
@@ -637,7 +674,7 @@ mod tests {
 
     #[test]
     fn test_use_clipboard_by_mode() {
-        // Авто: буфер только для текста в буфере
+        // Авто: буфер, если в нём нет картинки/файлов (текст и пустой буфер годятся)
         assert!(use_clipboard("auto", true));
         assert!(!use_clipboard("auto", false));
         // Явные режимы не зависят от содержимого буфера
